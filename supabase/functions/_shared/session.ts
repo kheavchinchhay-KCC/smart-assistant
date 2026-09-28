@@ -7,15 +7,13 @@
 //
 //   auth-telegram-miniapp validates Telegram's initData HMAC, resolves
 //   an app_users row, and mints a JWT with this module, SIGNED WITH THE
-//   SAME SECRET AS SUPABASE_JWT_SECRET. Because PostgREST/GoTrue trust
-//   any JWT signed with that secret, our custom claims
-//   (`app_user_id`, `app_role`) are readable inside Postgres via
-//   `auth.jwt()`, which is exactly what the RLS policies in
-//   0011_rls_policies.sql key off of.
+//   SAME APP_SESSION_SECRET. The frontend talks only to our Edge API; the
+//   custom token is verified by that function and is not a Supabase Auth JWT.
+//   Elevated database work is performed with the server-only Supabase key.
 //
-// SUPABASE_JWT_SECRET must be set as an Edge Function secret. It is the
-// same value shown in Supabase Dashboard -> Project Settings -> API ->
-// JWT Settings -> JWT Secret. It must NEVER be sent to the frontend.
+// APP_SESSION_SECRET must be set as an Edge Function secret. Generate a
+// strong random value and use the same value for the `api` and
+// `auth-telegram-miniapp` Edge Functions. It must NEVER be sent to the frontend.
 
 import jwt from "npm:jsonwebtoken@9";
 
@@ -55,9 +53,9 @@ export function verifySessionToken(token: string): SessionClaims & { exp: number
 }
 
 function requireSecret(): string {
-  const secret = Deno.env.get("SUPABASE_JWT_SECRET");
+  const secret = Deno.env.get("APP_SESSION_SECRET");
   if (!secret) {
-    throw new Error("Missing SUPABASE_JWT_SECRET in Edge Function environment");
+    throw new Error("Missing APP_SESSION_SECRET in Edge Function environment");
   }
   return secret;
 }

@@ -3,6 +3,13 @@
   command = "npm run build"
   publish = "dist"
 
+  # Supabase URL and publishable key are intentionally embedded in the browser
+  # bundle by Vite. They are public client configuration, not server secrets.
+  # Keep Netlify secret scanning enabled for real secrets, but do not scan these
+  # two expected public build variables.
+  [build.environment]
+    SECRETS_SCAN_OMIT_KEYS = "VITE_SUPABASE_URL,VITE_SUPABASE_PUBLISHABLE_KEY"
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

@@ -9,20 +9,16 @@
 --   Identity comes from Telegram (validated server-side in the
 --   `auth-telegram-miniapp` and `telegram-webhook` Edge Functions).
 --
---   After validating a Telegram identity, the Edge Function mints a JWT
---   signed with the project's SUPABASE_JWT_SECRET (the same secret
---   PostgREST/GoTrue validates against). The JWT carries custom claims:
---     { role: "authenticated", app_user_id: "<uuid>", app_role: "ADMIN"|"USER", telegram_id: "<id>" }
---   The frontend then calls Supabase (PostgREST / supabase-js) directly
---   using that JWT as the bearer token for ordinary reads/writes, and Row
---   Level Security (enabled on every table in 0011) enforces isolation
---   using `auth.jwt() ->> 'app_user_id'` — NOT auth.uid()/auth.users.
+--   After validating a Telegram identity, the authentication Edge Function
+--   mints a short-lived application session JWT signed with APP_SESSION_SECRET.
+--   The frontend then sends that token only to our `api` Edge Function,
+--   which verifies it and derives the application user id/role from the
+--   validated token — never from a client-supplied user id.
 --
---   Edge Functions that need elevated access (OCR/Gemini calls, exports,
---   Telegram webhook writes on behalf of a chat, admin user management)
---   use the SUPABASE_SERVICE_ROLE_KEY server-side only, and are
---   responsible for deriving the user id from the *validated* Telegram
---   update / session — never from a client-supplied field.
+--   Edge Functions that need elevated database access (OCR/Gemini calls,
+--   exports, Telegram webhook writes on behalf of a chat, admin user
+--   management) use the server-only Supabase secret key. Direct browser
+--   PostgREST access is not part of this application's request path.
 -- ============================================================================
 
 create extension if not exists pgcrypto;      -- gen_random_uuid()
