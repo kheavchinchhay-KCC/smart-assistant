@@ -1,10 +1,12 @@
-# Release status — final hardening patch
+# Release status — final deployment-hardening patch
 
 This tree is the deployment candidate based on the uploaded `smart-assistant-supabase.zip`. It includes one additive migration, `supabase/migrations/0018_security_hardening.sql`, and focused frontend/Edge Function hardening. Older migrations are left unchanged.
 
 ## Fixed in this patch
 
-- Netlify: `base = "frontend"`, `publish = "dist"`.
+- Netlify: `base = "frontend"`, `publish = "dist"`; Node pinned to 24.12.0.
+- Edge gateway JWT verification is disabled for the three custom-auth/webhook functions; each endpoint performs its own trust-boundary validation.
+- Custom application sessions use `APP_SESSION_SECRET` instead of the reserved `SUPABASE_JWT_SECRET`.
 - Web Sale/Petty Cash: edit, delete/create, custom date range, timezone-aware dates, server-side totals, CSV export, and browser Print/PDF.
 - CSV: UTF-8 BOM plus formula-injection protection.
 - Telegram export: XLSX with ExcelJS; PDF with pdf-lib + fontkit + runtime Noto Sans Khmer; A4 landscape pagination and repeated headers.

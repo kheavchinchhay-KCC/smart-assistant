@@ -4,6 +4,46 @@ Last worked on: final hardening patch for the uploaded `smart-assistant-supabase
 The patch fixes the production blockers found during review and keeps the schema
 change additive in `supabase/migrations/0018_security_hardening.sql`.
 
+## Deployment configuration
+
+The Netlify site is a monorepo-style frontend build. The repository root contains
+`netlify.toml`; Netlify must build with `frontend` as the base directory, run
+`npm run build`, and publish `dist` relative to that base. Node is pinned to
+24.12.0 in both `netlify.toml` and `frontend/.nvmrc` so the build does not depend
+on the changing Netlify default Node version.
+
+The Supabase web endpoints use application-level authentication, not Supabase's
+gateway JWT verification: `api`, `auth-telegram-miniapp`, and `telegram-webhook`
+all set `verify_jwt = false` and perform their own verification. `api` and the
+Telegram auth function share `APP_SESSION_SECRET`; the webhook separately uses
+`TELEGRAM_WEBHOOK_SECRET`. This avoids coupling the custom session token to
+Supabase's legacy JWT secret/signing-key rotation.
+
+Hosted Edge Functions receive `SUPABASE_URL` and `SUPABASE_SECRET_KEYS`
+automatically. Do not try to create custom secrets whose names start with
+`SUPABASE_`; Supabase reserves that prefix.
+
+Required Netlify variables:
+
+```text
+VITE_SUPABASE_URL
+VITE_SUPABASE_PUBLISHABLE_KEY
+```
+
+Required custom Supabase Edge Function secrets:
+
+```text
+TELEGRAM_BOT_TOKEN
+TELEGRAM_WEBHOOK_SECRET
+TELEGRAM_MINI_APP_URL
+FRONTEND_ORIGIN
+APP_SESSION_SECRET
+```
+
+`TELEGRAM_MINI_APP_URL` and `FRONTEND_ORIGIN` must be the exact deployed Netlify
+origin with no trailing slash. `APP_SESSION_SECRET` should be a random high-entropy
+value shared by the `api` and `auth-telegram-miniapp` functions.
+
 ## Included in this final patch
 
 - Netlify config corrected to `base = frontend`, `publish = dist`.
@@ -18,7 +58,7 @@ change additive in `supabase/migrations/0018_security_hardening.sql`.
   The font is not stored in the repository.
 - Telegram Bot API failures now throw instead of being silently treated as success.
 - Web API re-validates the current database user on every request, so deactivated,
-  blocked, or expired users lose access immediately even with an old session JWT.
+  blocked, or expired users lose access immediately even with an old application session token.
 - Preferences updates whitelist writable fields and always force the authenticated
   user id server-side.
 - Gemini Vault/key-cache/test helpers are owner-scoped; the Gemini model cache has RLS.

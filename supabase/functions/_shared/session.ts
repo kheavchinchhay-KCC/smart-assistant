@@ -1,21 +1,20 @@
 // supabase/functions/_shared/session.ts
 //
-// This project does not use Supabase Auth (no email/password, no OAuth
-// users). Identity comes from Telegram. See the security-model comment
-// at the top of migration 0001_extensions_and_helpers.sql for the full
-// rationale — short version:
+// This project does not use Supabase Auth (no email/password/OAuth users).
+// Identity comes from Telegram and is validated server-side. After validation,
+// the auth function mints a short-lived application session token signed with
+// APP_SESSION_SECRET. The API function verifies that token itself and then
+// re-validates the corresponding app_users row on every request.
 //
-//   auth-telegram-miniapp validates Telegram's initData HMAC, resolves
-//   an app_users row, and mints a JWT with this module, SIGNED WITH THE
-//   SAME SECRET AS SUPABASE_JWT_SECRET. Because PostgREST/GoTrue trust
-//   any JWT signed with that secret, our custom claims
-//   (`app_user_id`, `app_role`) are readable inside Postgres via
-//   `auth.jwt()`, which is exactly what the RLS policies in
-//   0011_rls_policies.sql key off of.
+// The API deliberately disables Supabase's gateway `verify_jwt` check because
+// this session token is an application token, not a Supabase Auth JWT. This
+// keeps the app independent of Supabase's legacy JWT secret / signing-key
+// rotation. Database access is performed by the server-side secret-key client
+// and every business operation receives the authenticated app user id.
 //
-// SUPABASE_JWT_SECRET must be set as an Edge Function secret. It is the
-// same value shown in Supabase Dashboard -> Project Settings -> API ->
-// JWT Settings -> JWT Secret. It must NEVER be sent to the frontend.
+// APP_SESSION_SECRET must be set as an Edge Function secret in both
+// `auth-telegram-miniapp` and `api`. It must NEVER be sent to the frontend.
+// Generate it randomly (for example: `openssl rand -hex 32`).
 
 import jwt from "npm:jsonwebtoken@9";
 
@@ -34,7 +33,7 @@ export function mintSessionToken(claims: SessionClaims): string {
 
   return jwt.sign(
     {
-      role: "authenticated", // required so PostgREST treats this as an authenticated request
+      role: "authenticated", // retained for compatibility with the existing claim shape
       sub: claims.app_user_id,
       app_user_id: claims.app_user_id,
       app_role: claims.app_role,
@@ -55,9 +54,9 @@ export function verifySessionToken(token: string): SessionClaims & { exp: number
 }
 
 function requireSecret(): string {
-  const secret = Deno.env.get("SUPABASE_JWT_SECRET");
+  const secret = Deno.env.get("APP_SESSION_SECRET");
   if (!secret) {
-    throw new Error("Missing SUPABASE_JWT_SECRET in Edge Function environment");
+    throw new Error("Missing APP_SESSION_SECRET in Edge Function environment");
   }
   return secret;
 }

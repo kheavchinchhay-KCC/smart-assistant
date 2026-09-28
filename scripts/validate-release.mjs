@@ -36,6 +36,9 @@ const netlify = read('netlify.toml');
 check(/base\s*=\s*"frontend"/.test(netlify), 'Netlify base must be frontend');
 check(/publish\s*=\s*"dist"/.test(netlify), 'Netlify publish must be dist when base is frontend');
 check(!/publish\s*=\s*"frontend\/dist"/.test(netlify), 'old incorrect Netlify publish path remains');
+check(/NODE_VERSION\s*=\s*"24\.12\.0"/.test(netlify), 'Netlify Node version must be pinned to 24.12.0');
+check(fs.existsSync(path.join(root, 'frontend', '.nvmrc')), 'frontend .nvmrc missing');
+if (fs.existsSync(path.join(root, 'frontend', '.nvmrc'))) check(read('frontend/.nvmrc').trim() === '24.12.0', 'frontend .nvmrc must pin Node 24.12.0');
 
 // Frontend public-key configuration.
 const env = read('frontend/.env.example');
@@ -53,6 +56,12 @@ check(!/set_cached_gemini_models\(/.test(gemini), 'old unscoped Gemini cache hel
 check(!/record_gemini_key_test\(\s*\{\s*p_key_ref_id:[^\n]*\}\s*\)/.test(gemini), 'Gemini test bookkeeping call is missing user scope');
 check(api.includes('require_current_app_user'), 'API current-session user validation missing');
 check(api.includes('get_gemini_key_plaintext_for_user'), 'API owner-scoped Gemini key retrieval missing');
+const fnConfig = read('supabase/config.toml');
+check(/\[functions\.api\][\s\S]*?verify_jwt\s*=\s*false/.test(fnConfig), 'api function must disable gateway verify_jwt and authenticate its own app session');
+check(/\[functions\.auth-telegram-miniapp\][\s\S]*?verify_jwt\s*=\s*false/.test(fnConfig), 'Telegram auth function must disable gateway verify_jwt and authenticate Telegram initData itself');
+check(/\[functions\.telegram-webhook\][\s\S]*?verify_jwt\s*=\s*false/.test(fnConfig), 'Telegram webhook must disable gateway verify_jwt and use its webhook secret');
+check(!/SUPABASE_JWT_SECRET/.test(read('supabase/functions/_shared/session.ts')), 'session signer still depends on reserved Supabase JWT secret');
+
 const telegramAuth = read('supabase/functions/_shared/telegramAuth.ts');
 check(telegramAuth.includes('authDate > nowSeconds + 300'), 'Telegram initData future-date replay guard missing');
 const webhook = read('supabase/functions/telegram-webhook/index.ts');
