@@ -22,17 +22,8 @@ enabled = false
 # Supabase Auth (email/password/OAuth) is intentionally disabled — this
 # project authenticates exclusively via Telegram. See README "Security
 # Model" and migration 0001_extensions_and_helpers.sql for the full
-# rationale. The web API now verifies its own application session token;
-# RLS remains enabled as defense in depth for any future user-scoped client.
+# rationale. RLS still applies, keyed off a custom-signed JWT rather
+# than auth.users.
 
 [edge_runtime]
 enabled = true
-
-[functions.api]
-verify_jwt = false
-
-[functions.auth-telegram-miniapp]
-verify_jwt = false
-
-[functions.telegram-webhook]
-verify_jwt = false

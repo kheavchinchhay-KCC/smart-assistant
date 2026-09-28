@@ -261,7 +261,7 @@ function AddMissingSaleModal({
 function EditSaleModal({
   row, onClose, onSaved, onError,
 }: { row: SaleRow; onClose: () => void; onSaved: () => Promise<void> | void; onError: (e: string) => void }) {
-  const { t } = useApp();
+  const { t, user } = useApp();
   const [form, setForm] = useState({
     customer_name: row.customer_name, amount: String(row.amount), currency: row.currency,
     merchant: row.merchant, remark: row.remark,
@@ -285,7 +285,7 @@ function EditSaleModal({
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>{t("common.edit")}</h3>
         <div style={{ display: "grid", gap: 8 }}>
-          <div>{t("sale.date")}: {new Date(row.transaction_at).toLocaleString(undefined, { timeZone: timezone || undefined })}</div>
+          <div>{t("sale.date")}: {new Date(row.transaction_at).toLocaleString(undefined, { timeZone: user?.timezone || undefined })}</div>
           <div>{t("sale.trxId")}: {row.trx_id}</div>
           <input placeholder={t("sale.customer")} value={form.customer_name} onChange={(e) => setForm({ ...form, customer_name: e.target.value })} />
           <input placeholder={t("sale.amount")} type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} />

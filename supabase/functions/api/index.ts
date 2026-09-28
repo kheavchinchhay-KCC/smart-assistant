@@ -3,7 +3,7 @@
 // Consolidated API endpoint for the Netlify frontend.
 //
 // Security invariants:
-//   - Identity comes only from the verified application session token.
+//   - Identity comes only from the verified session JWT.
 //   - The database is re-checked on every request so revoked/expired users and
 //     changed roles take effect immediately.
 //   - No request payload can choose a different user_id/actor id.
