@@ -1,0 +1,30 @@
+function onEdit(e){
+
+  const sheet = e.source.getActiveSheet();
+
+  if(sheet.getName() !== SHEET_NAME) return;
+
+  const row = e.range.getRow();
+  if(row === 1) return;
+
+  const date     = sheet.getRange(row, COL_DATE + 1).getValue();
+  const time     = sheet.getRange(row, COL_TIME + 1).getValue();
+  const name     = sheet.getRange(row, COL_NAME + 1).getValue();
+  const amount   = sheet.getRange(row, COL_AMOUNT + 1).getValue();
+  const currency = sheet.getRange(row, COL_CURRENCY + 1).getValue();
+  const merchant = sheet.getRange(row, COL_MERCHANT + 1).getValue();
+  const trxId    = sheet.getRange(row, COL_TRXID + 1).getValue();
+
+  if(!date || !time || !name || !amount || !currency || !merchant || !trxId){
+    return;
+  }
+
+  sortTransactions();
+
+  try{
+    refreshDashboard();
+  }catch(err){
+    Logger.log("Dashboard refresh failed: " + err);
+  }
+
+}

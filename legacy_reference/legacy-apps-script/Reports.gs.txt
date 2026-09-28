@@ -1,0 +1,521 @@
+function sendToday(chatId){
+  sendReport(chatId,"today");
+}
+
+function sendYesterday(chatId){
+  sendReport(chatId,"yesterday");
+}
+
+function sendWeekly(chatId){
+  sendReport(chatId,"weekly");
+}
+
+function sendMonthly(chatId){
+  sendReport(chatId,"monthly");
+}
+
+function money(amount, currency){
+  if(currency == "KHR"){
+    return "៛" + Number(amount).toLocaleString();
+  }
+  return "$" + Number(amount).toFixed(2);
+}
+
+function sendReport(chatId, mode, value) {
+
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
+  const data = sheet.getDataRange().getValues();
+  const tz = Session.getScriptTimeZone();
+
+  let start = new Date();
+  let end = new Date();
+
+  switch(mode){
+    case "yesterday":
+      start.setDate(start.getDate()-1);
+      end = new Date(start);
+      break;
+
+    case "weekly":
+      start.setDate(start.getDate()-6);
+      break;
+
+    case "monthly":
+      start = new Date(start.getFullYear(), start.getMonth(), 1);
+      break;
+
+    case "date":
+      start = new Date(value);
+      end = new Date(value);
+      break;
+  }
+
+  start.setHours(0,0,0,0);
+  end.setHours(23,59,59,999);
+
+  let count = 0;
+  let usdTotal = 0;
+  let khrTotal = 0;
+  let lastCustomer = "";
+  let lastTime = "";
+
+  for(let i=1;i<data.length;i++){
+
+    const rowDate = new Date(data[i][COL_DATE]);
+
+    if(rowDate >= start && rowDate <= end){
+
+      const amount = Number(data[i][COL_AMOUNT]);
+      const currency = data[i][COL_CURRENCY];
+
+      count++;
+
+      if(currency == "KHR"){
+        khrTotal += amount;
+      } else {
+        usdTotal += amount;
+      }
+
+      lastCustomer = data[i][COL_NAME];
+
+      lastTime = Utilities.formatDate(
+        new Date(data[i][COL_TIME]),
+        tz,
+        "h:mm a"
+      );
+    }
+  }
+
+  if(count == 0){
+    sendMessage(chatId, MSG_NO_DATA);
+    return;
+  }
+
+  let title = "📅 REPORT";
+
+if(mode == "today")      title = TITLE_TODAY;
+if(mode == "yesterday")  title = TITLE_YESTERDAY;
+if(mode == "weekly")     title = TITLE_WEEKLY;
+if(mode == "monthly")    title = TITLE_MONTHLY;
+if(mode == "date")       title = TITLE_DATE;
+
+  const msg =
+"━━━━━━━━━━━━━━━━━━━━\n"+
+title+
+"\n━━━━━━━━━━━━━━━━━━━━\n\n"+
+"💳 Transactions\n"+count+
+"\n\n💵 USD Revenue\n$"+usdTotal.toFixed(2)+
+"\n\n🇰🇭 KHR Revenue\n៛"+khrTotal.toLocaleString()+
+"\n\n🕒 Last\n"+lastTime+
+"\n\n👤 Last Customer\n"+lastCustomer;
+
+  sendMessage(chatId,msg);
+}
+
+function sendDate(chatId,date){
+
+  const regex = /^\d{4}-\d{2}-\d{2}$/;
+
+  if(!regex.test(date)){
+    sendMessage(chatId,"❌ សរសេរមិនត្រូវ\n\nឧទាហរណ៍:\n2030-07-15");
+    return;
+  }
+
+  sendReport(chatId,"date",date);
+}
+
+function sendDateRange(chatId,text){
+
+  const regex =
+/^(\d{4}-\d{2}-\d{2})\s*(?:to|-)\s*(\d{4}-\d{2}-\d{2})$/i;
+
+  const m = text.match(regex);
+
+  if(!m){
+
+    sendMessage(
+      chatId,
+      "❌ សរសេរមិនត្រូវ \n\n"+
+      "ឧទាហរណ៍:\n"+
+      "2026-07-20 to 2030-07-15"
+    );
+
+    return;
+
+  }
+
+  sendReportRange(chatId,m[1],m[2]);
+
+}
+
+function sendReportRange(chatId, startDate, endDate){
+
+  const sheet = SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getSheetByName(SHEET_NAME);
+
+  const data = sheet.getDataRange().getValues();
+
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+
+  start.setHours(0,0,0,0);
+  end.setHours(23,59,59,999);
+
+  let count = 0;
+  let usdTotal = 0;
+  let khrTotal = 0;
+  let lastCustomer = "";
+  let lastDate = "";
+  let lastTime = "";
+
+  for(let i=1;i<data.length;i++){
+
+    const rowDate = new Date(data[i][COL_DATE]);
+
+    if(rowDate >= start && rowDate <= end){
+
+      const amount = Number(data[i][COL_AMOUNT]);
+      const currency = data[i][COL_CURRENCY];
+
+      count++;
+
+      if(currency == "KHR"){
+        khrTotal += amount;
+      } else {
+        usdTotal += amount;
+      }
+
+      lastCustomer = data[i][COL_NAME];
+
+      lastDate = Utilities.formatDate(
+        new Date(data[i][COL_DATE]),
+        TIME_ZONE,
+        "M/d/yyyy"
+      );
+
+      lastTime = Utilities.formatDate(
+        new Date(data[i][COL_TIME]),
+        TIME_ZONE,
+        "h:mm a"
+      );
+
+    }
+
+  }
+
+  if(count == 0){
+    sendMessage(chatId, MSG_NO_DATA);
+    return;
+  }
+
+  const msg =
+"━━━━━━━━━━━━━━━━━━━━\n"+
+TITLE_DATERANGE+
+"\n━━━━━━━━━━━━━━━━━━━━\n\n"+
+
+"From\n"+
+startDate+
+
+"\n\nTo\n"+
+endDate+
+
+"\n\n💳 Transactions\n"+
+count+
+
+"\n\n💵 USD Revenue\n$"+
+usdTotal.toFixed(2)+
+
+"\n\n🇰🇭 KHR Revenue\n៛"+
+khrTotal.toLocaleString()+
+
+"\n\n🕒 Last Transaction\n"+
+lastDate+" "+lastTime+
+
+"\n\n👤 Last Customer\n"+
+lastCustomer;
+
+  sendMessage(chatId,msg);
+
+}
+
+
+function sendCustomer(chatId, name) {
+
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
+  const data = sheet.getDataRange().getValues();
+
+  const keyword = name.toUpperCase().trim();
+
+  let count = 0;
+  let usdTotal = 0;
+  let khrTotal = 0;
+  let lastDate = "";
+  let lastTime = "";
+  let customerName = "";
+
+  for(let i=1;i<data.length;i++){
+
+    if(String(data[i][COL_NAME]).toUpperCase().includes(keyword)){
+
+      const amount = Number(data[i][COL_AMOUNT]);
+      const currency = data[i][COL_CURRENCY];
+
+      count++;
+
+      if(currency == "KHR"){
+        khrTotal += amount;
+      } else {
+        usdTotal += amount;
+      }
+
+      customerName = data[i][COL_NAME];
+
+      lastDate = Utilities.formatDate(new Date(data[i][COL_DATE]), TIME_ZONE, "M/d/yyyy");
+      lastTime = Utilities.formatDate(new Date(data[i][COL_TIME]), TIME_ZONE, "h:mm a");
+    }
+  }
+
+  if(count == 0){
+    sendMessage(chatId, MSG_CUSTOMER_NOT_FOUND);
+    return;
+  }
+
+  const msg =
+"━━━━━━━━━━━━━━━━━━━━\n"+
+"👤 របាយការណ៍អតិថិជន\n"+
+"━━━━━━━━━━━━━━━━━━━━\n\n"+
+"👤 ឈ្មោះ\n"+customerName+
+"\n\n💳 ប្រតិបត្តិការសរុប\n"+count+
+"\n\n💵 USD Paid\n$"+usdTotal.toFixed(2)+
+"\n\n🇰🇭 KHR Paid\n៛"+khrTotal.toLocaleString()+
+"\n\n🕒 Last Payment\n"+lastDate+" "+lastTime;
+
+  sendMessage(chatId,msg);
+}
+
+
+
+function sendTransaction(chatId, trxId) {
+
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
+
+  const values = sheet.getDataRange().getValues();
+  const display = sheet.getDataRange().getDisplayValues();
+
+  trxId = trxId.replace(/\D/g,"").trim();
+
+  for(let i=1;i<display.length;i++){
+
+    const sheetTrxId = String(display[i][COL_TRXID]).replace(/\D/g,"").trim();
+
+    if(sheetTrxId == trxId){
+
+      const date = Utilities.formatDate(new Date(values[i][COL_DATE]), TIME_ZONE, "M/d/yyyy");
+      const time = Utilities.formatDate(new Date(values[i][COL_TIME]), TIME_ZONE, "h:mm a");
+
+      const remark = values[i][COL_REMARK] == "" ? "-" : values[i][COL_REMARK];
+      const currency = values[i][COL_CURRENCY];
+
+      const msg =
+"━━━━━━━━━━━━━━━━━━━━\n"+
+"🧾 លំអិតពីប្រតិបត្តិការតាមលេខយោង\n"+
+"━━━━━━━━━━━━━━━━━━━━\n\n"+
+"👤 ឈ្មោះ\n"+values[i][COL_NAME]+
+"\n\n💰 ចំនួនទឹកប្រាក់\n"+money(values[i][COL_AMOUNT], currency)+
+"\n\n🏪 អ្នកលក់\n"+values[i][COL_MERCHANT]+
+"\n\n📝 Remark\n"+remark+
+"\n\n📅 Date\n"+date+
+"\n\n🕒 Time\n"+time+
+"\n\n🆔 Trx ID\n"+display[i][COL_TRXID];
+
+      sendMessage(chatId,msg);
+      return;
+    }
+  }
+
+  sendMessage(chatId, MSG_TRX_NOT_FOUND);
+}
+
+function sendTopCustomers(chatId){
+
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
+  const data = sheet.getDataRange().getValues();
+
+  const customers = {};
+
+  for(let i=1;i<data.length;i++){
+
+    const name = data[i][COL_NAME];
+    const amount = Number(data[i][COL_AMOUNT]);
+    const currency = data[i][COL_CURRENCY];
+
+    if(!customers[name]){
+      customers[name] = {
+        usd:0,
+        khr:0,
+        count:0
+      };
+    }
+
+    if(currency == "KHR"){
+      customers[name].khr += amount;
+    } else {
+      customers[name].usd += amount;
+    }
+
+    customers[name].count++;
+  }
+
+  const ranking = Object.keys(customers)
+    .map(name => ({
+      name:name,
+      usd:customers[name].usd,
+      khr:customers[name].khr,
+      count:customers[name].count
+    }))
+    .sort((a,b)=>b.usd-a.usd)
+    .slice(0,10);
+
+  const medals = ["🥇","🥈","🥉","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟"];
+
+  let msg =
+"━━━━━━━━━━━━━━━━━━━━\n"+
+"🏆 ចំណាត់ថ្នាក់អតិថិជនទិញទាំង១០\n"+
+"━━━━━━━━━━━━━━━━━━━━\n\n";
+
+  ranking.forEach(function(c,index){
+    msg +=
+medals[index]+" "+c.name+
+"\n💵 USD $"+c.usd.toFixed(2)+
+"\n🇰🇭 KHR ៛"+c.khr.toLocaleString()+
+"\n💳 "+c.count+" Transactions\n\n";
+  });
+
+  sendMessage(chatId,msg);
+}
+
+function sendMerchant(chatId, merchantName) {
+
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
+  const data = sheet.getDataRange().getValues();
+
+  const keyword = merchantName.toUpperCase().trim();
+
+  let count = 0;
+  let usdTotal = 0;
+  let khrTotal = 0;
+  let lastDate = "";
+  let lastTime = "";
+  let merchant = "";
+
+  for(let i=1;i<data.length;i++){
+
+    const rowMerchant = String(data[i][COL_MERCHANT]).toUpperCase();
+
+    if(rowMerchant.includes(keyword)){
+
+      const amount = Number(data[i][COL_AMOUNT]);
+      const currency = data[i][COL_CURRENCY];
+
+      count++;
+
+      if(currency == "KHR"){
+        khrTotal += amount;
+      } else {
+        usdTotal += amount;
+      }
+
+      merchant = data[i][COL_MERCHANT];
+
+      lastDate = Utilities.formatDate(new Date(data[i][COL_DATE]), TIME_ZONE, "M/d/yyyy");
+      lastTime = Utilities.formatDate(new Date(data[i][COL_TIME]), TIME_ZONE, "h:mm a");
+    }
+  }
+
+  if(count == 0){
+    sendMessage(chatId, MSG_MERCHANT_NOT_FOUND);
+    return;
+  }
+
+  const msg =
+"━━━━━━━━━━━━━━━━━━━━\n"+
+"🏪 របាយការណ៍ហាង ឬ អ្នកលក់\n"+
+"━━━━━━━━━━━━━━━━━━━━\n\n"+
+"🏪 ហាង\n"+merchant+
+"\n\n💳 Transactions\n"+count+
+"\n\n💵 USD Revenue\n$"+usdTotal.toFixed(2)+
+"\n\n🇰🇭 KHR Revenue\n៛"+khrTotal.toLocaleString()+
+"\n\n🕒 Last Transaction\n"+lastDate+" "+lastTime;
+
+  sendMessage(chatId,msg);
+}
+
+function sendTopMerchants(chatId){
+
+  const sheet = SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getSheetByName(SHEET_NAME);
+
+  const data = sheet.getDataRange().getValues();
+
+  const merchants = {};
+
+  for(let i = 1; i < data.length; i++){
+
+    const merchant = data[i][COL_MERCHANT];
+    const amount = Number(data[i][COL_AMOUNT]);
+    const currency = data[i][COL_CURRENCY];
+
+    if(!merchant) continue;
+
+    if(!merchants[merchant]){
+      merchants[merchant] = {
+        usd: 0,
+        khr: 0,
+        count: 0
+      };
+    }
+
+    if(currency == "KHR"){
+      merchants[merchant].khr += amount;
+    } else {
+      merchants[merchant].usd += amount;
+    }
+
+    merchants[merchant].count++;
+  }
+
+  const ranking = Object.keys(merchants)
+    .map(name => ({
+      name: name,
+      usd: merchants[name].usd,
+      khr: merchants[name].khr,
+      count: merchants[name].count
+    }))
+    .sort((a,b) => b.usd - a.usd)
+    .slice(0,10);
+
+  const medals = ["🥇","🥈","🥉","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟"];
+
+  let msg =
+"━━━━━━━━━━━━━━━━━━━━\n"+
+"🏪 ចំណាត់ថ្នាក់ហាង ឬ អ្នកលក់\n"+
+"━━━━━━━━━━━━━━━━━━━━\n\n";
+
+  ranking.forEach(function(m,index){
+
+    msg +=
+medals[index]+" "+m.name+
+"\n💵 USD $"+m.usd.toFixed(2)+
+"\n🇰🇭 KHR ៛"+m.khr.toLocaleString()+
+"\n💳 "+m.count+" Transactions\n\n";
+
+  });
+
+  sendMessage(chatId,msg);
+}
+
+
+
+

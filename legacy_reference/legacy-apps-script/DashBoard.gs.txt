@@ -1,0 +1,233 @@
+function refreshDashboard(){
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(SHEET_NAME);
+
+  let dash = ss.getSheetByName("Dashboard");
+
+  if(!dash){
+    dash = ss.insertSheet("Dashboard");
+  }
+
+  dash.clear();
+
+  const data = sheet.getDataRange().getValues();
+
+  const today = new Date();
+  today.setHours(0,0,0,0);
+
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  monthStart.setHours(0,0,0,0);
+
+  let todayUsd = 0;
+  let todayKhr = 0;
+  let todayCount = 0;
+
+  let monthUsd = 0;
+  let monthKhr = 0;
+
+  let usdTotal = 0;
+  let khrTotal = 0;
+  let usdCount = 0;
+  let khrCount = 0;
+
+  let biggestAmount = 0;
+  let biggestCurrency = "USD";
+
+  const customers = {};
+  const merchants = {};
+  const dailyRevenue = {};
+
+  for(let i=1;i<data.length;i++){
+
+    const rowDate = new Date(data[i][COL_DATE]);
+    rowDate.setHours(0,0,0,0);
+
+    const dateKey = Utilities.formatDate(rowDate, TIME_ZONE, "yyyy-MM-dd");
+
+    const name = data[i][COL_NAME];
+    const merchant = data[i][COL_MERCHANT];
+    const amount = Number(data[i][COL_AMOUNT]);
+    const currency = data[i][COL_CURRENCY];
+
+    if(isNaN(amount)) continue;
+
+    if(rowDate.getTime() === today.getTime()){
+      todayCount++;
+
+      if(currency == "KHR"){
+        todayKhr += amount;
+      }else{
+        todayUsd += amount;
+      }
+    }
+
+    if(rowDate >= monthStart){
+      if(currency == "KHR"){
+        monthKhr += amount;
+      }else{
+        monthUsd += amount;
+      }
+    }
+
+    if(currency == "KHR"){
+      khrTotal += amount;
+      khrCount++;
+    }else{
+      usdTotal += amount;
+      usdCount++;
+    }
+
+    if(amount > biggestAmount){
+      biggestAmount = amount;
+      biggestCurrency = currency;
+    }
+
+    if(name){
+      if(!customers[name]){
+        customers[name] = {usd:0,khr:0,count:0};
+      }
+
+      if(currency == "KHR"){
+        customers[name].khr += amount;
+      }else{
+        customers[name].usd += amount;
+      }
+
+      customers[name].count++;
+    }
+
+    if(merchant){
+      if(!merchants[merchant]){
+        merchants[merchant] = {usd:0,khr:0,count:0};
+      }
+
+      if(currency == "KHR"){
+        merchants[merchant].khr += amount;
+      }else{
+        merchants[merchant].usd += amount;
+      }
+
+      merchants[merchant].count++;
+    }
+
+    if(!dailyRevenue[dateKey]){
+      dailyRevenue[dateKey] = {usd:0,khr:0,count:0};
+    }
+
+    if(currency == "KHR"){
+      dailyRevenue[dateKey].khr += amount;
+    }else{
+      dailyRevenue[dateKey].usd += amount;
+    }
+
+    dailyRevenue[dateKey].count++;
+  }
+
+  const avgUsd = usdCount > 0 ? usdTotal / usdCount : 0;
+  const avgKhr = khrCount > 0 ? khrTotal / khrCount : 0;
+
+  const topCustomers = Object.keys(customers)
+    .map(name => [
+      name,
+      customers[name].count,
+      "$"+customers[name].usd.toFixed(2)+" / ៛"+customers[name].khr.toLocaleString()
+    ])
+    .sort((a,b) => customers[b[0]].usd - customers[a[0]].usd)
+    .slice(0,10);
+
+  const topMerchants = Object.keys(merchants)
+    .map(name => [
+      name,
+      merchants[name].count,
+      "$"+merchants[name].usd.toFixed(2)+" / ៛"+merchants[name].khr.toLocaleString()
+    ])
+    .sort((a,b) => merchants[b[0]].usd - merchants[a[0]].usd)
+    .slice(0,10);
+
+  const revenueByDay = Object.keys(dailyRevenue)
+    .sort()
+    .slice(-30)
+    .map(date => [
+      date,
+      dailyRevenue[date].count,
+      dailyRevenue[date].usd,
+      dailyRevenue[date].khr
+    ]);
+
+  dash.getRange("A1").setValue("📊 ABA Dashboard");
+  dash.getRange("A1:E1").merge();
+
+  dash.getRange("A3").setValue("Today's Revenue USD");
+  dash.getRange("B3").setValue(todayUsd);
+
+  dash.getRange("A4").setValue("Today's Revenue KHR");
+  dash.getRange("B4").setValue(todayKhr);
+
+  dash.getRange("A5").setValue("Today's Transactions");
+  dash.getRange("B5").setValue(todayCount);
+
+  dash.getRange("A6").setValue("This Month USD");
+  dash.getRange("B6").setValue(monthUsd);
+
+  dash.getRange("A7").setValue("This Month KHR");
+  dash.getRange("B7").setValue(monthKhr);
+
+  dash.getRange("A8").setValue("Total Customers");
+  dash.getRange("B8").setValue(Object.keys(customers).length);
+
+  dash.getRange("A9").setValue("Total Merchants");
+  dash.getRange("B9").setValue(Object.keys(merchants).length);
+
+  dash.getRange("A10").setValue("Average Sale USD");
+  dash.getRange("B10").setValue(avgUsd);
+
+  dash.getRange("A11").setValue("Average Sale KHR");
+  dash.getRange("B11").setValue(avgKhr);
+
+  dash.getRange("A12").setValue("Biggest Sale");
+  dash.getRange("B12").setValue(money(biggestAmount,biggestCurrency));
+
+  dash.getRange("A16").setValue("🥇 Top 10 Customers");
+  dash.getRange("A17:C17").setValues([["Customer","Transactions","Total"]]);
+
+  if(topCustomers.length > 0){
+    dash.getRange(18,1,topCustomers.length,3).setValues(topCustomers);
+  }
+
+  dash.getRange("E16").setValue("🏪 Top 10 Merchants");
+  dash.getRange("E17:G17").setValues([["Merchant","Transactions","Total"]]);
+
+  if(topMerchants.length > 0){
+    dash.getRange(18,5,topMerchants.length,3).setValues(topMerchants);
+  }
+
+  dash.getRange("I16").setValue("📊 Revenue by Day");
+  dash.getRange("I17:L17").setValues([["Date","Transactions","USD","KHR"]]);
+
+  if(revenueByDay.length > 0){
+    dash.getRange(18,9,revenueByDay.length,4).setValues(revenueByDay);
+  }
+
+  dash.getRange("A1").setFontSize(18).setFontWeight("bold");
+  dash.getRange("A3:A12").setFontWeight("bold");
+  dash.getRange("A16").setFontWeight("bold");
+  dash.getRange("E16").setFontWeight("bold");
+  dash.getRange("I16").setFontWeight("bold");
+
+  dash.getRange("A17:C17").setFontWeight("bold");
+  dash.getRange("E17:G17").setFontWeight("bold");
+  dash.getRange("I17:L17").setFontWeight("bold");
+
+  dash.getRange("B3").setNumberFormat("$#,##0.00");
+  dash.getRange("B4").setNumberFormat("#,##0");
+  dash.getRange("B6").setNumberFormat("$#,##0.00");
+  dash.getRange("B7").setNumberFormat("#,##0");
+  dash.getRange("B10").setNumberFormat("$#,##0.00");
+  dash.getRange("B11").setNumberFormat("#,##0");
+
+  dash.getRange("K18:K").setNumberFormat("$#,##0.00");
+  dash.getRange("L18:L").setNumberFormat("#,##0");
+
+  dash.autoResizeColumns(1,12);
+}

@@ -1,0 +1,29 @@
+project_id = "smart-assistant"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "storage", "vault"]
+
+[db]
+port = 54322
+major_version = 16
+
+[studio]
+enabled = true
+port = 54323
+
+[storage]
+enabled = true
+file_size_limit = "20MiB"
+
+[auth]
+enabled = false
+# Supabase Auth (email/password/OAuth) is intentionally disabled — this
+# project authenticates exclusively via Telegram. See README "Security
+# Model" and migration 0001_extensions_and_helpers.sql for the full
+# rationale. RLS still applies, keyed off a custom-signed JWT rather
+# than auth.users.
+
+[edge_runtime]
+enabled = true

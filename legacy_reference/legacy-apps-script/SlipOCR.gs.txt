@@ -1,0 +1,1160 @@
+// ======================================================
+// SlipOCR.gs
+// Supports:
+// 1. Sale slip / Missing Transaction
+// 2. Expense slip / Petty Cash Expense
+// 3. KHR -> USD conversion for expense
+// 4. Expense holder from From account
+// ======================================================
+
+
+function handleUploadedPhoto(chatId, photos){
+
+  handleUploadedPhotoQueue(chatId, photos);
+
+}
+
+function getSlipType(data){
+
+  const slipType = String(data.slipType || "").trim().toUpperCase();
+  const merchant = String(data.merchant || "").trim().toUpperCase();
+
+  if(merchant.indexOf("PHTEAS DECOR") > -1){
+    return "SALE_TRANSACTION";
+  }
+
+  if(slipType === "EXPENSE"){
+    return "EXPENSE";
+  }
+
+  if(slipType === "SALE_TRANSACTION"){
+    return "SALE_TRANSACTION";
+  }
+
+  if(merchant && merchant !== "PHTEAS DECOR"){
+    return "EXPENSE";
+  }
+
+  return "";
+}
+
+
+// ======================================================
+// Telegram image download
+// ======================================================
+
+function downloadTelegramFile(fileId){
+
+  const getFileUrl = "https://api.telegram.org/bot" + TOKEN + "/getFile?file_id=" + fileId;
+
+  const fileResponse = UrlFetchApp.fetch(getFileUrl);
+  const fileResult = JSON.parse(fileResponse.getContentText());
+
+  if(!fileResult.ok){
+    throw new Error("Cannot get Telegram file.");
+  }
+
+  const filePath = fileResult.result.file_path;
+  const downloadUrl = "https://api.telegram.org/file/bot" + TOKEN + "/" + filePath;
+
+  const response = UrlFetchApp.fetch(downloadUrl);
+  const bytes = response.getContent();
+
+  let mimeType = "image/jpeg";
+
+  const lowerPath = String(filePath || "").toLowerCase();
+
+  if(lowerPath.endsWith(".png")){
+    mimeType = "image/png";
+  }else if(lowerPath.endsWith(".webp")){
+    mimeType = "image/webp";
+  }else if(lowerPath.endsWith(".jpg") || lowerPath.endsWith(".jpeg")){
+    mimeType = "image/jpeg";
+  }
+
+  return Utilities.newBlob(bytes, mimeType, "telegram_slip_image");
+}
+
+
+function getSafeImageMimeType(imageBlob){
+
+  const mimeType = String(imageBlob.getContentType() || "").toLowerCase();
+
+  if(
+    mimeType === "image/jpeg" ||
+    mimeType === "image/png" ||
+    mimeType === "image/webp"
+  ){
+    return mimeType;
+  }
+
+  return "image/jpeg";
+}
+
+
+// ======================================================
+// Gemini OCR
+// ======================================================
+
+function readSlipWithGemini(imageBlob){
+
+  const base64Image = Utilities.base64Encode(imageBlob.getBytes());
+
+  const prompt =
+    "Read this bank/payment slip image.\n\n" +
+    "Return ONLY valid JSON. No markdown. No explanation.\n\n" +
+    "JSON format:\n" +
+    "{\n" +
+    "  \"isBankSlip\": true,\n" +
+    "  \"slipType\": \"SALE_TRANSACTION or EXPENSE\",\n" +
+    "  \"transactionDate\": \"M/D/YYYY\",\n" +
+    "  \"transactionTime\": \"HH:mm:ss\",\n" +
+    "  \"name\": \"\",\n" +
+    "  \"expenseHolder\": \"\",\n" +
+    "  \"amount\": 0,\n" +
+    "  \"currency\": \"USD or KHR\",\n" +
+    "  \"merchant\": \"\",\n" +
+    "  \"remark\": \"\",\n" +
+    "  \"trxId\": \"\"\n" +
+    "}\n\n" +
+
+    "General rules:\n" +
+    "- If image is not a bank/payment slip, return {\"isBankSlip\": false}.\n" +
+    "- Amount must be positive number only. Ignore minus sign for amount value.\n" +
+    "- Currency must be USD or KHR. Khmer riel, ៛, Riel, រៀល means KHR.\n" +
+    "- Date must be M/D/YYYY.\n" +
+    "- Time must be HH:mm:ss.\n" +
+    "- trxId should use Trx. ID if visible. If no Trx. ID, use Reference #, External #, Purchase #, KHQR reference, or receipt reference number.\n" +
+    "- Return valid JSON only.\n\n" +
+
+    "Slip type rules:\n" +
+    "- If seller/merchant is PHTEAS DECOR or PHTEAS DECOR by D.RA, slipType must be SALE_TRANSACTION.\n" +
+    "- If seller/merchant is not PHTEAS DECOR, and it looks like money paid out for fuel, phone, service, supplier, seller, KHQR, or daily expense, slipType must be EXPENSE.\n" +
+    "- If amount at top starts with minus sign, it is usually EXPENSE unless seller/merchant is PHTEAS DECOR.\n\n" +
+
+    "For EXPENSE:\n" +
+    "- expenseHolder must be extracted from From account / payer account.\n" +
+    "- Examples of the same holder: Kheav Chinchhay, Kheavchinchhay, KHEAV CHINCHHAY.\n" +
+    "- If holder looks like Kheavchinchhay, return it as KHEAV CHINCHHAY.\n" +
+    "- merchant must be seller/recipient/service name, not the from account.\n" +
+    "- name can also be the from account/payer name if visible.\n" +
+    "- remark should be Remark if visible, or category like gasoline, Metfone, KHQR, supplier.\n\n" +
+
+    "For SALE_TRANSACTION:\n" +
+    "- name must be payer/customer/from account if visible.\n" +
+    "- merchant default is PHTEAS DECOR if unclear.\n" +
+    "- Do not guess trxId. If not visible, return empty string.";
+
+  const payload = {
+    contents: [
+      {
+        parts: [
+          {
+            text: prompt
+          },
+          {
+            inline_data: {
+              mime_type: getSafeImageMimeType(imageBlob),
+              data: base64Image
+            }
+          }
+        ]
+      }
+    ]
+  };
+
+  const raw = callGeminiWithFallback(payload);
+
+  const json = JSON.parse(raw);
+
+  if(!json.candidates || !json.candidates[0]){
+    throw new Error("No Gemini response: " + raw);
+  }
+
+  let text = json.candidates[0].content.parts[0].text;
+
+  text = cleanGeminiJson(text);
+
+  return JSON.parse(text);
+}
+
+
+function cleanGeminiJson(text){
+
+  text = String(text || "").trim();
+
+  text = text.replace(/```json/gi, "");
+  text = text.replace(/```/g, "");
+  text = text.trim();
+
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+
+  if(start === -1 || end === -1){
+    throw new Error("Invalid JSON from Gemini: " + text);
+  }
+
+  return text.substring(start, end + 1);
+}
+
+
+function callGeminiWithFallback(payload){
+
+  if(typeof GEMINI_API_KEYS === "undefined" || !GEMINI_API_KEYS || GEMINI_API_KEYS.length === 0){
+    throw new Error("GEMINI_API_KEYS is not configured in Config.gs");
+  }
+
+  const models =
+    typeof GEMINI_MODELS !== "undefined" && GEMINI_MODELS && GEMINI_MODELS.length > 0
+    ? GEMINI_MODELS
+    : ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
+
+  let lastError = "";
+
+  for(let m = 0; m < models.length; m++){
+
+    const modelName = models[m];
+
+    for(let i = 0; i < GEMINI_API_KEYS.length; i++){
+
+      const apiKey = GEMINI_API_KEYS[i];
+
+      const url =
+        "https://generativelanguage.googleapis.com/v1beta/models/" +
+        modelName +
+        ":generateContent?key=" +
+        apiKey;
+
+      try{
+
+        const response = UrlFetchApp.fetch(url, {
+          method: "post",
+          contentType: "application/json",
+          payload: JSON.stringify(payload),
+          muteHttpExceptions: true
+        });
+
+        const raw = response.getContentText();
+        const code = response.getResponseCode();
+
+        if(code >= 200 && code < 300){
+          Logger.log("Gemini success with model: " + modelName + ", key: " + (i + 1));
+          return raw;
+        }
+
+        lastError = raw;
+
+        Logger.log(
+          "Gemini failed. Model: " + modelName +
+          ", key: " + (i + 1) +
+          ", code: " + code +
+          ", error: " + raw
+        );
+
+        continue;
+
+      }catch(err){
+
+        lastError = err.message;
+
+        Logger.log(
+          "Gemini exception. Model: " + modelName +
+          ", key: " + (i + 1) +
+          ", error: " + err.message
+        );
+
+        continue;
+      }
+    }
+  }
+
+  throw new Error("All Gemini models and API keys failed.\n\nLast error:\n" + lastError);
+}
+
+
+// ======================================================
+// Sale Slip / Missing Transaction
+// ======================================================
+
+function saveSlipTempData(chatId, data){
+
+  setTempData(chatId, "slip_date", data.transactionDate || "");
+  setTempData(chatId, "slip_time", data.transactionTime || "");
+  setTempData(chatId, "slip_name", data.name || "");
+  setTempData(chatId, "slip_amount", String(data.amount || 0));
+  setTempData(chatId, "slip_currency", data.currency || "USD");
+  setTempData(chatId, "slip_merchant", data.merchant || "PHTEAS DECOR");
+  setTempData(chatId, "slip_trxid", data.trxId || "");
+}
+
+
+function sendSlipPreview(chatId, data){
+
+  const keyboard = {
+    keyboard: [
+      [
+        {text: BTN_CONFIRM_SLIP_TRANSACTION}
+      ],
+      [
+        {text: BTN_EDIT_SLIP_TRANSACTION},
+        {text: BTN_CANCEL_SLIP_TRANSACTION}
+      ],
+      [
+        {text: BTN_BACK}
+      ]
+    ],
+    resize_keyboard: true,
+    persistent: true
+  };
+
+  const amount = Number(data.amount) || 0;
+
+  showKeyboard(chatId,
+    "✅ Bank Slip Detected\n\n" +
+    "Please check before saving:\n\n" +
+    "Date: " + (data.transactionDate || "-") + "\n" +
+    "Time: " + (data.transactionTime || "-") + "\n" +
+    "Name: " + (data.name || "-") + "\n" +
+    "Amount: " + (data.currency || "USD") + " " + amount.toFixed(2) + "\n" +
+    "Merchant: " + (data.merchant || "PHTEAS DECOR") + "\n" +
+    "Trx ID: " + (data.trxId || "-"),
+    keyboard
+  );
+}
+
+
+function confirmSlipTransaction(chatId){
+
+  if(!isAdmin(chatId)){
+    sendMessage(chatId, "⛔ Admin only.");
+    return;
+  }
+
+  const dateText = getTempData(chatId, "slip_date");
+  const timeText = getTempData(chatId, "slip_time");
+  const name = getTempData(chatId, "slip_name");
+  const amount = Number(getTempData(chatId, "slip_amount")) || 0;
+  const currency = getTempData(chatId, "slip_currency") || "USD";
+  const merchant = getTempData(chatId, "slip_merchant") || "PHTEAS DECOR";
+  const trxId = getTempData(chatId, "slip_trxid");
+
+  if(!dateText || !timeText || !name || !amount || !trxId){
+    sendMessage(chatId,
+      "❌ Slip data is incomplete.\n\n" +
+      "Please upload the image again or use manual Missing Transaction."
+    );
+
+    clearSlipTempData(chatId);
+    return;
+  }
+
+  if(transactionIdExists(trxId)){
+    sendMessage(chatId,
+      "⚠️ Duplicate Transaction\n\n" +
+      "This Trx ID already exists:\n" +
+      trxId
+    );
+
+    clearSlipTempData(chatId);
+    return;
+  }
+
+  const dateObj = parseManualTransactionDate(dateText);
+  const timeObj = parseManualTransactionTime(timeText);
+
+  if(!dateObj || !timeObj){
+    sendMessage(chatId,
+      "❌ Invalid date or time from slip.\n\n" +
+      "Please use manual Missing Transaction."
+    );
+
+    clearSlipTempData(chatId);
+    return;
+  }
+
+  const sheet = SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getSheetByName(SHEET_NAME);
+
+  sheet.appendRow([
+    dateObj,
+    timeObj,
+    name,
+    amount,
+    currency,
+    merchant,
+    "",
+    trxId,
+    "IMAGE SLIP TRANSACTION"
+  ]);
+
+  sortTransactions();
+
+  // Dashboard refresh disabled for faster saving
+  // Dashboard will refresh by daily trigger instead
+
+  clearSlipTempData(chatId);
+  clearState(chatId);
+
+  sendMessage(chatId,
+    "✅ Slip Transaction saved\n\n" +
+    "Date: " + dateText + "\n" +
+    "Time: " + timeText + "\n" +
+    "Name: " + name + "\n" +
+    "Amount: " + currency + " " + amount.toFixed(2) + "\n" +
+    "Merchant: " + merchant + "\n" +
+    "Trx ID: " + trxId
+  );
+
+  sendMainMenu(chatId);
+}
+
+
+function cancelSlipTransaction(chatId){
+
+  clearSlipTempData(chatId);
+  clearState(chatId);
+
+  sendMessage(chatId, "❌ Slip transaction cancelled.");
+
+  sendMainMenu(chatId);
+}
+
+
+function clearSlipTempData(chatId){
+
+  clearTempData(chatId, "slip_date");
+  clearTempData(chatId, "slip_time");
+  clearTempData(chatId, "slip_name");
+  clearTempData(chatId, "slip_amount");
+  clearTempData(chatId, "slip_currency");
+  clearTempData(chatId, "slip_merchant");
+  clearTempData(chatId, "slip_trxid");
+}
+
+
+// ======================================================
+// Edit Sale Slip Result
+// ======================================================
+
+function updateSlipTempDataFromText(chatId, text){
+
+  const data = parseSlipEditText(text);
+
+  if(!data){
+    sendMessage(chatId,
+      "❌ Invalid format\n\n" +
+      "Please send like this:\n\n" +
+      "Date: 7/15/2026\n" +
+      "Time: 15:42:00\n" +
+      "Name: CHHAY\n" +
+      "Amount: 10.50\n" +
+      "Currency: USD\n" +
+      "Merchant: PHTEAS DECOR\n" +
+      "Trx ID: 178315848252879"
+    );
+
+    setState(chatId, "slip_edit_input");
+    return;
+  }
+
+  if(!data.date || !data.time || !data.name || !data.amount || !data.trxId){
+    sendMessage(chatId,
+      "❌ Missing required data\n\n" +
+      "Required:\n" +
+      "Date\n" +
+      "Time\n" +
+      "Name\n" +
+      "Amount\n" +
+      "Trx ID"
+    );
+
+    setState(chatId, "slip_edit_input");
+    return;
+  }
+
+  if(transactionIdExists(data.trxId)){
+    sendMessage(chatId,
+      "⚠️ Duplicate Transaction\n\n" +
+      "This Trx ID already exists:\n" +
+      data.trxId
+    );
+
+    setState(chatId, "slip_edit_input");
+    return;
+  }
+
+  setTempData(chatId, "slip_date", data.date);
+  setTempData(chatId, "slip_time", data.time);
+  setTempData(chatId, "slip_name", data.name);
+  setTempData(chatId, "slip_amount", String(data.amount));
+  setTempData(chatId, "slip_currency", data.currency);
+  setTempData(chatId, "slip_merchant", data.merchant);
+  setTempData(chatId, "slip_trxid", data.trxId);
+
+  sendSlipPreview(chatId, {
+    transactionDate: data.date,
+    transactionTime: data.time,
+    name: data.name,
+    amount: data.amount,
+    currency: data.currency,
+    merchant: data.merchant,
+    trxId: data.trxId
+  });
+}
+
+
+function parseSlipEditText(text){
+
+  text = String(text || "").trim();
+
+  const data = {
+    date: "",
+    time: "",
+    name: "",
+    amount: 0,
+    currency: "USD",
+    merchant: "PHTEAS DECOR",
+    trxId: ""
+  };
+
+  const lines = text.split(/\r?\n/);
+
+  for(let i = 0; i < lines.length; i++){
+
+    const line = String(lines[i] || "").trim();
+
+    if(!line){
+      continue;
+    }
+
+    const colonIndex = line.indexOf(":");
+
+    if(colonIndex === -1){
+      continue;
+    }
+
+    const key = line.substring(0, colonIndex).trim().toLowerCase();
+    const value = line.substring(colonIndex + 1).trim();
+
+    if(key === "date"){
+      data.date = value;
+    }
+
+    if(key === "time"){
+      data.time = value;
+    }
+
+    if(key === "name"){
+      data.name = value;
+    }
+
+    if(key === "amount"){
+      const parsed = parseAmountAndCurrency(value);
+      data.amount = parsed.amount;
+      data.currency = parsed.currency;
+    }
+
+    if(key === "currency"){
+      data.currency = normalizeCurrency(value);
+    }
+
+    if(key === "merchant"){
+      data.merchant = value || "PHTEAS DECOR";
+    }
+
+    if(
+      key === "trx id" ||
+      key === "trxid" ||
+      key === "trx. id" ||
+      key === "transaction id"
+    ){
+      data.trxId = value.trim();
+    }
+  }
+
+  data.currency = normalizeCurrency(data.currency);
+
+  if(!data.merchant){
+    data.merchant = "PHTEAS DECOR";
+  }
+
+  return data;
+}
+
+
+// ======================================================
+// Expense Slip
+// ======================================================
+
+function handleExpenseSlipResult(chatId, data){
+
+  data.amount = Number(data.amount) || 0;
+  data.currency = normalizeCurrency(data.currency || "USD");
+  data.expenseHolder = normalizeExpenseHolder(data.expenseHolder || data.name || "");
+  data.name = data.expenseHolder;
+  data.merchant = data.merchant || "-";
+  data.remark = data.remark || "-";
+  data.trxId = String(data.trxId || "").trim();
+
+  if(!data.amount){
+    sendMessage(chatId,
+      "❌ Expense slip detected, but amount was not found.\n\n" +
+      "Please upload clearer image."
+    );
+    return;
+  }
+
+  if(data.trxId && expenseSlipExists(data.trxId)){
+    sendMessage(chatId,
+      "⚠️ Duplicate Expense Slip\n\n" +
+      "This expense slip already exists:\n" +
+      data.trxId
+    );
+    return;
+  }
+
+  saveExpenseSlipTempData(chatId, data);
+
+  sendExpenseSlipPreview(chatId, data);
+}
+
+
+function saveExpenseSlipTempData(chatId, data){
+
+  setTempData(chatId, "expense_slip_date", data.transactionDate || "");
+  setTempData(chatId, "expense_slip_time", data.transactionTime || "");
+  setTempData(chatId, "expense_slip_name", data.name || "");
+  setTempData(chatId, "expense_slip_holder", normalizeExpenseHolder(data.expenseHolder || data.name || ""));
+  setTempData(chatId, "expense_slip_amount", String(data.amount || 0));
+  setTempData(chatId, "expense_slip_currency", normalizeCurrency(data.currency || "USD"));
+  setTempData(chatId, "expense_slip_merchant", data.merchant || "");
+  setTempData(chatId, "expense_slip_remark", data.remark || "");
+  setTempData(chatId, "expense_slip_trxid", data.trxId || "");
+}
+
+
+function sendExpenseSlipPreview(chatId, data){
+
+  const keyboard = {
+    keyboard: [
+      [
+        {text: BTN_CONFIRM_EXPENSE_SLIP}
+      ],
+      [
+        {text: BTN_EDIT_EXPENSE_SLIP},
+        {text: BTN_CANCEL_EXPENSE_SLIP}
+      ],
+      [
+        {text: BTN_BACK}
+      ]
+    ],
+    resize_keyboard: true,
+    persistent: true
+  };
+
+  const amount = Number(data.amount) || 0;
+  const currency = normalizeCurrency(data.currency || "USD");
+  const amountUSD = convertExpenseAmountToUSD(amount, currency);
+  const holder = normalizeExpenseHolder(data.expenseHolder || data.name || "-");
+
+  showKeyboard(chatId,
+    "💸 Expense Slip Detected\n\n" +
+    "Please check before saving to Petty Cash:\n\n" +
+    "Date: " + (data.transactionDate || "-") + "\n" +
+    "Time: " + (data.transactionTime || "-") + "\n" +
+    "Holder: " + holder + "\n" +
+    "Seller: " + (data.merchant || "-") + "\n" +
+    "Original Amount: " + formatExpenseOriginalAmount(amount, currency) + "\n" +
+    "Save as USD: $" + amountUSD.toFixed(2) + "\n" +
+    "Rate: " + KHR_PER_USD + " KHR = 1 USD\n" +
+    "Remark: " + (data.remark || "-") + "\n" +
+    "Reference/Trx ID: " + (data.trxId || "-"),
+    keyboard
+  );
+}
+
+
+function confirmExpenseSlip(chatId){
+
+  if(!isAdmin(chatId)){
+    sendMessage(chatId, "⛔ Admin only.");
+    return;
+  }
+
+  const dateText = getTempData(chatId, "expense_slip_date");
+  const timeText = getTempData(chatId, "expense_slip_time");
+  const holder = normalizeExpenseHolder(getTempData(chatId, "expense_slip_holder") || "-");
+  const amount = Number(getTempData(chatId, "expense_slip_amount")) || 0;
+  const currency = normalizeCurrency(getTempData(chatId, "expense_slip_currency") || "USD");
+  const merchant = getTempData(chatId, "expense_slip_merchant") || "-";
+  const remark = getTempData(chatId, "expense_slip_remark") || "-";
+  const trxId = getTempData(chatId, "expense_slip_trxid") || "";
+
+  if(!dateText || !timeText || !amount){
+    sendMessage(chatId,
+      "❌ Expense slip data is incomplete.\n\n" +
+      "Please upload the image again."
+    );
+
+    clearExpenseSlipTempData(chatId);
+    return;
+  }
+
+  if(trxId && expenseSlipExists(trxId)){
+    sendMessage(chatId,
+      "⚠️ Duplicate Expense Slip\n\n" +
+      "This expense slip already exists:\n" +
+      trxId
+    );
+
+    clearExpenseSlipTempData(chatId);
+    return;
+  }
+
+  saveExpenseSlipToPettyCash(chatId, {
+    dateText: dateText,
+    timeText: timeText,
+    holder: holder,
+    amount: amount,
+    currency: currency,
+    merchant: merchant,
+    remark: remark,
+    trxId: trxId
+  });
+
+  clearExpenseSlipTempData(chatId);
+  clearState(chatId);
+
+  sendMainMenu(chatId);
+}
+
+
+function cancelExpenseSlip(chatId){
+
+  clearExpenseSlipTempData(chatId);
+  clearState(chatId);
+
+  sendMessage(chatId, "❌ Expense slip cancelled.");
+
+  sendMainMenu(chatId);
+}
+
+
+function saveExpenseSlipToPettyCash(chatId, data){
+
+  const sheet = getPettySheet();
+
+  const dateObj = parsePettyDateInput(data.dateText);
+
+  let timeObj = parseManualTransactionTime(data.timeText);
+
+  if(!timeObj){
+    timeObj = new Date();
+  }
+
+  if(!dateObj){
+    sendMessage(chatId,
+      "❌ Invalid expense slip date.\n\n" +
+      "Please upload again."
+    );
+    return;
+  }
+
+  const originalAmount = Number(data.amount) || 0;
+  const originalCurrency = normalizeCurrency(data.currency || "USD");
+  const amountUSD = convertExpenseAmountToUSD(originalAmount, originalCurrency);
+
+  const lastBalance = getLastPettyBalance();
+  const newBalance = lastBalance - amountUSD;
+
+  const id = generatePettyId();
+
+  let fullRemark =
+    "Holder: " + (data.holder || "-") +
+    " | Seller: " + (data.merchant || "-") +
+    " | Original: " + formatExpenseOriginalAmount(originalAmount, originalCurrency);
+
+  if(originalCurrency === "KHR"){
+    fullRemark += " | Rate: " + KHR_PER_USD + " KHR = 1 USD";
+  }
+
+  if(data.remark && data.remark !== "-"){
+    fullRemark += " | Remark: " + data.remark;
+  }
+
+  if(data.trxId){
+    fullRemark += " | Ref: " + data.trxId;
+  }
+
+  sheet.appendRow([
+    id,
+    dateObj,
+    timeObj,
+    "OUT",
+    amountUSD,
+    fullRemark,
+    newBalance,
+    newBalance,
+    data.holder || chatId,
+    "EXPENSE_SLIP",
+    "Telegram Image",
+    "EXPENSE SLIP TRX ID: " + data.trxId
+  ]);
+
+  sortPettyCash();
+  recalculatePettyBalance();
+
+  const currentCash = getLastPettyBalance();
+
+  sendMessage(chatId,
+    "✅ Expense Slip saved to Petty Cash\n\n" +
+    "ID: " + id + "\n" +
+    "Date: " + data.dateText + "\n" +
+    "Time: " + data.timeText + "\n" +
+    "Holder: " + (data.holder || "-") + "\n" +
+    "Seller: " + data.merchant + "\n" +
+    "Original Amount: " + formatExpenseOriginalAmount(originalAmount, originalCurrency) + "\n" +
+    "Saved Amount: $" + amountUSD.toFixed(2) + "\n" +
+    "Remark: " + (data.remark || "-") + "\n" +
+    "Reference/Trx ID: " + (data.trxId || "-") + "\n\n" +
+    "Current Cash: $" + currentCash.toFixed(2)
+  );
+
+  if(currentCash < PETTY_LOW_ALERT){
+
+    const need = PETTY_LOW_ALERT - currentCash;
+
+    sendMessage(chatId,
+      "🚨 PETTY CASH LOW ALERT\n\n" +
+      "💵 Current Balance : $" + currentCash.toFixed(2) + "\n" +
+      "⚠️ Minimum Balance : $" + PETTY_LOW_ALERT.toFixed(2) + "\n" +
+      "💰 Need Refill : $" + need.toFixed(2) + "\n\n" +
+      "Please refill the petty cash."
+    );
+  }
+}
+
+
+function expenseSlipExists(trxId){
+
+  trxId = String(trxId || "").trim();
+
+  if(!trxId){
+    return false;
+  }
+
+  const sheet = getPettySheet();
+  const data = sheet.getDataRange().getValues();
+
+  for(let i = 1; i < data.length; i++){
+
+    const raw = String(data[i][PETTY_COL_RAW] || "");
+
+    if(raw.indexOf("EXPENSE SLIP TRX ID: " + trxId) > -1){
+      return true;
+    }
+  }
+
+  return false;
+}
+
+
+function clearExpenseSlipTempData(chatId){
+
+  clearTempData(chatId, "expense_slip_date");
+  clearTempData(chatId, "expense_slip_time");
+  clearTempData(chatId, "expense_slip_name");
+  clearTempData(chatId, "expense_slip_holder");
+  clearTempData(chatId, "expense_slip_amount");
+  clearTempData(chatId, "expense_slip_currency");
+  clearTempData(chatId, "expense_slip_merchant");
+  clearTempData(chatId, "expense_slip_remark");
+  clearTempData(chatId, "expense_slip_trxid");
+}
+
+
+// ======================================================
+// Edit Expense Slip
+// ======================================================
+
+function updateExpenseSlipTempDataFromText(chatId, text){
+
+  const data = parseExpenseSlipEditText(text);
+
+  if(!data){
+    sendMessage(chatId,
+      "❌ Invalid format\n\n" +
+      "Example:\n\n" +
+      "Date: 7/16/2026\n" +
+      "Time: 16:24:00\n" +
+      "Holder: KHEAV CHINCHHAY\n" +
+      "Seller: SUON SIYINH LMPS 7\n" +
+      "Amount: 25000\n" +
+      "Currency: KHR\n" +
+      "Remark: vet 4\n" +
+      "Ref: 57612796073"
+    );
+
+    setState(chatId, "expense_slip_edit_input");
+    return;
+  }
+
+  if(!data.date || !data.time || !data.amount){
+    sendMessage(chatId,
+      "❌ Missing required data\n\n" +
+      "Required:\n" +
+      "Date\n" +
+      "Time\n" +
+      "Amount"
+    );
+
+    setState(chatId, "expense_slip_edit_input");
+    return;
+  }
+
+  if(data.trxId && expenseSlipExists(data.trxId)){
+    sendMessage(chatId,
+      "⚠️ Duplicate Expense Slip\n\n" +
+      "This expense slip already exists:\n" +
+      data.trxId
+    );
+
+    setState(chatId, "expense_slip_edit_input");
+    return;
+  }
+
+  setTempData(chatId, "expense_slip_date", data.date);
+  setTempData(chatId, "expense_slip_time", data.time);
+  setTempData(chatId, "expense_slip_holder", data.holder);
+  setTempData(chatId, "expense_slip_amount", String(data.amount));
+  setTempData(chatId, "expense_slip_currency", data.currency);
+  setTempData(chatId, "expense_slip_merchant", data.seller);
+  setTempData(chatId, "expense_slip_remark", data.remark);
+  setTempData(chatId, "expense_slip_trxid", data.trxId);
+
+  sendExpenseSlipPreview(chatId, {
+    transactionDate: data.date,
+    transactionTime: data.time,
+    expenseHolder: data.holder,
+    name: data.holder,
+    amount: data.amount,
+    currency: data.currency,
+    merchant: data.seller,
+    remark: data.remark,
+    trxId: data.trxId
+  });
+}
+
+
+function parseExpenseSlipEditText(text){
+
+  text = String(text || "").trim();
+
+  const data = {
+    date: "",
+    time: "",
+    holder: "",
+    seller: "",
+    amount: 0,
+    currency: "USD",
+    remark: "",
+    trxId: ""
+  };
+
+  const lines = text.split(/\r?\n/);
+
+  for(let i = 0; i < lines.length; i++){
+
+    const line = String(lines[i] || "").trim();
+
+    if(!line){
+      continue;
+    }
+
+    const colonIndex = line.indexOf(":");
+
+    if(colonIndex === -1){
+      continue;
+    }
+
+    const key = line.substring(0, colonIndex).trim().toLowerCase();
+    const value = line.substring(colonIndex + 1).trim();
+
+    if(key === "date"){
+      data.date = value;
+    }
+
+    if(key === "time"){
+      data.time = value;
+    }
+
+    if(key === "holder" || key === "expense holder" || key === "from account"){
+      data.holder = normalizeExpenseHolder(value);
+    }
+
+    if(key === "seller" || key === "merchant"){
+      data.seller = value;
+    }
+
+    if(key === "amount" || key === "original amount"){
+      const parsed = parseAmountAndCurrency(value);
+      data.amount = parsed.amount;
+      data.currency = parsed.currency;
+    }
+
+    if(key === "currency"){
+      data.currency = normalizeCurrency(value);
+    }
+
+    if(key === "remark"){
+      data.remark = value;
+    }
+
+    if(
+      key === "ref" ||
+      key === "reference" ||
+      key === "reference #" ||
+      key === "reference/trx id" ||
+      key === "trx id" ||
+      key === "trxid" ||
+      key === "trx. id" ||
+      key === "transaction id"
+    ){
+      data.trxId = value;
+    }
+  }
+
+  data.currency = normalizeCurrency(data.currency);
+
+  if(!data.holder){
+    data.holder = "-";
+  }
+
+  if(!data.seller){
+    data.seller = "-";
+  }
+
+  if(!data.remark){
+    data.remark = "-";
+  }
+
+  return data;
+}
+
+
+// ======================================================
+// Helpers
+// ======================================================
+
+function parseAmountAndCurrency(value){
+
+  value = String(value || "").replace(/,/g, "").trim();
+
+  let currency = "USD";
+
+  if(value.indexOf("៛") > -1 || /KHR/i.test(value) || /RIEL/i.test(value) || /រៀល/i.test(value)){
+    currency = "KHR";
+  }
+
+  if(value.indexOf("$") > -1 || /USD/i.test(value)){
+    currency = "USD";
+  }
+
+  const amountMatch = value.match(/(\d+(?:\.\d+)?)/);
+
+  let amount = 0;
+
+  if(amountMatch){
+    amount = Number(amountMatch[1]) || 0;
+  }
+
+  return {
+    amount: amount,
+    currency: currency
+  };
+}
+
+
+function normalizeCurrency(currency){
+
+  currency = String(currency || "USD").trim().toUpperCase();
+
+  if(currency.indexOf("KHR") > -1 || currency.indexOf("៛") > -1 || currency.indexOf("RIEL") > -1 || currency.indexOf("រៀល") > -1){
+    return "KHR";
+  }
+
+  return "USD";
+}
+
+
+function normalizeExpenseHolder(holder){
+
+  holder = String(holder || "").trim();
+
+  if(!holder){
+    return "-";
+  }
+
+  holder = holder.replace(/\s+/g, " ").trim();
+
+  const noSpace = holder.replace(/\s+/g, "").toUpperCase();
+
+  if(noSpace === "KHEAVCHINCHHAY"){
+    return "KHEAV CHINCHHAY";
+  }
+
+  return holder.toUpperCase();
+}
+
+
+function convertExpenseAmountToUSD(amount, currency){
+
+  amount = Number(amount) || 0;
+  currency = normalizeCurrency(currency);
+
+  let usd = amount;
+
+  if(currency === "KHR"){
+    usd = amount / KHR_PER_USD;
+  }
+
+  return Math.round((usd + Number.EPSILON) * 100) / 100;
+}
+
+
+function formatExpenseOriginalAmount(amount, currency){
+
+  amount = Number(amount) || 0;
+  currency = normalizeCurrency(currency);
+
+  if(currency === "KHR"){
+    return currency + " " + formatNumber(amount, 0);
+  }
+
+  return currency + " " + formatNumber(amount, 2);
+}
+
+function hasPendingSlip(chatId){
+
+  const saleTrxId = getTempData(chatId, "slip_trxid");
+  const expenseTrxId = getTempData(chatId, "expense_slip_trxid");
+  const saleDate = getTempData(chatId, "slip_date");
+  const expenseDate = getTempData(chatId, "expense_slip_date");
+
+  if(saleTrxId || expenseTrxId || saleDate || expenseDate){
+    return true;
+  }
+
+  return false;
+}
+
+function formatNumber(value, decimals){
+
+  value = Number(value) || 0;
+
+  return value.toLocaleString("en-US", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals
+  });
+}

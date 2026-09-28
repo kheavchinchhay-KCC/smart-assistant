@@ -1,0 +1,1012 @@
+function parsePettyInput(text){
+
+  text = String(text || "").trim();
+
+  const match = text.match(/(\$?\d+(?:\.\d+)?)/);
+
+  if(!match){
+    return null;
+  }
+
+  const amount = Number(match[1].replace("$", ""));
+
+  if(!amount || amount <= 0){
+    return null;
+  }
+
+  let remark = text.replace(match[1], "").trim();
+
+  if(!remark){
+    remark = "";
+  }
+
+  return {
+    amount: amount,
+    remark: remark,
+    raw: text
+  };
+}
+
+
+function getPettySheet(){
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(PETTY_SHEET_NAME);
+
+  if(!sheet){
+    sheet = ss.insertSheet(PETTY_SHEET_NAME);
+    sheet.appendRow([
+      "ID",
+      "Date",
+      "Time",
+      "Type",
+      "Amount",
+      "Remark",
+      "Running Balance",
+      "Current Cash",
+      "User",
+      "Mode",
+      "Source",
+      "Raw Text"
+    ]);
+  }
+
+  return sheet;
+}
+
+
+function getLastPettyBalance(){
+
+  const sheet = getPettySheet();
+  const lastRow = sheet.getLastRow();
+
+  if(lastRow <= 1){
+    return 0;
+  }
+
+  const value = Number(
+    sheet.getRange(
+      lastRow,
+      PETTY_COL_CURRENT_CASH + 1
+    ).getValue()
+  );
+
+  return Number.isFinite(value) ? value : 0;
+}
+
+
+function generatePettyId(){
+
+  const sheet = getPettySheet();
+  const lastRow = sheet.getLastRow();
+
+  // No transactions yet
+  if(lastRow <= 1){
+    return "PC000001";
+  }
+
+  const ids = sheet
+    .getRange(2, PETTY_COL_ID + 1, lastRow - 1, 1)
+    .getValues();
+
+  let maxNumber = 0;
+
+  for(let i = 0; i < ids.length; i++){
+
+    const id = String(ids[i][0] || "").trim().toUpperCase();
+
+    const match = id.match(/^PC(\d+)$/);
+
+    if(match){
+
+      const number = Number(match[1]);
+
+      if(number > maxNumber){
+        maxNumber = number;
+      }
+    }
+  }
+
+  return "PC" + String(maxNumber + 1).padStart(6, "0");
+}
+
+
+function savePettyCash(chatId, text, type, mode, customDateText){
+
+  const parsed = parsePettyInput(text);
+
+  if(!parsed){
+    sendMessage(
+      chatId,
+      "❌ Invalid input\n\n" +
+      "សូមបញ្ចូល ចំនួនទឹកប្រាក់(គឹតជា$) ជាមួយនិង កំណត់ត្រា(ប្រសិនបើមាន)\n\n" +
+      "ឧទាហរណ៍:\n" +
+      "Deposit 100\n" +
+      "10.88 បានពីភ្ញៀវ\n" +
+      "10.99"
+    );
+    return;
+  }
+
+  const sheet = getPettySheet();
+
+  let dateObj = new Date();
+
+  if(customDateText){
+
+    const parsedDate = parsePettyDateInput(customDateText);
+
+    if(parsedDate){
+      dateObj = parsedDate;
+    }
+  }
+
+  const now = new Date();
+
+  const date = Utilities.formatDate(
+    dateObj,
+    TIME_ZONE,
+    "M/d/yyyy"
+  );
+
+  const time = Utilities.formatDate(
+    now,
+    TIME_ZONE,
+    "HH:mm:ss"
+  );
+
+  // Always generate a brand-new permanent ID
+  // based on the highest existing ID.
+  const id = generatePettyId();
+
+  // Add the transaction first.
+  // Balance is temporarily zero and will be recalculated
+  // after sorting.
+  sheet.appendRow([
+    id,
+    date,
+    time,
+    type,
+    parsed.amount,
+    parsed.remark,
+    0,
+    0,
+    chatId,
+    mode || "NORMAL",
+    "Telegram",
+    parsed.raw
+  ]);
+
+  // IMPORTANT:
+  // Sort first, then recalculate the complete ledger.
+  sortPettyCash();
+  recalculatePettyBalance();
+
+  // Get the real final cash after recalculation.
+  const finalBalance = getLastPettyBalance();
+
+  clearState(chatId);
+
+  let msg = "";
+
+  if(type === "IN"){
+
+    msg =
+      "✅ Cash In saved\n\n" +
+      "ID: " + id + "\n" +
+      "Amount: $" + parsed.amount.toFixed(2) + "\n" +
+      "Remark: " + (parsed.remark || "-") + "\n" +
+      "Current Cash: $" + finalBalance.toFixed(2);
+  }
+
+  if(type === "OUT"){
+
+    msg =
+      "✅ Expense saved\n\n" +
+      "ID: " + id + "\n" +
+      "Amount: $" + parsed.amount.toFixed(2) + "\n" +
+      "Remark: " + (parsed.remark || "-") + "\n" +
+      "Current Cash: $" + finalBalance.toFixed(2);
+  }
+
+  sendMessage(chatId, msg);
+
+  // Use FINAL recalculated balance for the alert.
+  if(finalBalance < PETTY_LOW_ALERT){
+
+    const need = PETTY_LOW_ALERT - finalBalance;
+
+    sendMessage(
+      chatId,
+      "🚨 ប្រាក់សុទ្ធជិតអស់ហើយ 🚨\n\n" +
+      "💵 ប្រាក់សុទ្ធនៅសល់តែ : $" + finalBalance.toFixed(2) + "\n" +
+      "⚠️ Minimum Balance : $" + PETTY_LOW_ALERT.toFixed(2) + "\n" +
+      "💰 ត្រូវបន្ថែមប្រាក់យ៉ាងតិច : $" + need.toFixed(2) + "\n\n" +
+      "សូមដាក់ប្រាក់ចូល បន្ថែម"
+    );
+  }
+}
+
+function sendPettyDailySummary(chatId){
+
+  const sheet = getPettySheet();
+  const data = sheet.getDataRange().getValues();
+
+  if(data.length <= 1){
+    sendMessage(chatId, "មិនទាន់មាន Petty Cash ទេ");
+    return;
+  }
+
+  const today = Utilities.formatDate(new Date(), TIME_ZONE, "M/d/yyyy");
+
+  let cashIn = 0;
+  let expense = 0;
+
+  for(let i = 1; i < data.length; i++){
+
+    let rowDate = data[i][PETTY_COL_DATE];
+
+    if(rowDate instanceof Date){
+      rowDate = Utilities.formatDate(rowDate, TIME_ZONE, "M/d/yyyy");
+    }else{
+      rowDate = String(rowDate).trim();
+    }
+
+    const type = String(data[i][PETTY_COL_TYPE]).trim();
+    const amount = Number(data[i][PETTY_COL_AMOUNT]) || 0;
+
+    if(rowDate !== today) continue;
+
+    if(type === "IN"){
+      cashIn += amount;
+    }
+
+    if(type === "OUT"){
+      expense += amount;
+    }
+  }
+
+  const balance = cashIn - expense;
+  const currentCash = getLastPettyBalance();
+
+  let msg =
+    "📅 Daily Petty Cash Summary\n\n" +
+    "Cash In: $" + cashIn.toFixed(2) + "\n" +
+    "Expense: $" + expense.toFixed(2) + "\n" +
+    "Balance: $" + balance.toFixed(2) + "\n\n" +
+    "Current Cash: $" + currentCash.toFixed(2);
+
+  sendMessage(chatId, msg);
+}
+
+function sendPettyPeriodSummary(chatId, period){
+
+  const sheet = getPettySheet();
+  const data = sheet.getDataRange().getValues();
+
+  if(data.length <= 1){
+    sendMessage(chatId, "មិនទាន់មាន Petty Cash ទេ");
+    return;
+  }
+
+  const now = new Date();
+
+  let startDate;
+  let title = "";
+
+  if(period === "weekly"){
+    startDate = new Date(now);
+    startDate.setDate(now.getDate() - now.getDay());
+    title = "📈 Weekly Petty Cash Summary";
+  }
+
+  if(period === "monthly"){
+    startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    title = "📆 Monthly Petty Cash Summary";
+  }
+
+  startDate.setHours(0,0,0,0);
+
+  let endDate = new Date(now);
+  endDate.setHours(23,59,59,999);
+
+  let cashIn = 0;
+  let expense = 0;
+
+  for(let i = 1; i < data.length; i++){
+
+    const rowDate = normalizePettyDate(data[i][PETTY_COL_DATE]);
+    if(!rowDate) continue;
+
+    if(rowDate < startDate || rowDate > endDate) continue;
+
+    const type = String(data[i][PETTY_COL_TYPE]).trim();
+    const amount = Number(data[i][PETTY_COL_AMOUNT]) || 0;
+
+    if(type === "IN") cashIn += amount;
+    if(type === "OUT") expense += amount;
+  }
+
+  const balance = cashIn - expense;
+  const currentCash = getLastPettyBalance();
+
+  sendMessage(chatId,
+    title + "\n\n" +
+    "Cash In: $" + cashIn.toFixed(2) + "\n" +
+    "Expense: $" + expense.toFixed(2) + "\n" +
+    "Balance: $" + balance.toFixed(2) + "\n\n" +
+    "Current Cash: $" + currentCash.toFixed(2)
+  );
+}
+
+
+function normalizePettyDate(value){
+
+  if(value instanceof Date){
+    const d = new Date(value);
+    d.setHours(0,0,0,0);
+    return d;
+  }
+
+  const text = String(value || "").trim();
+
+  const parts = text.split(/[\/\-]/);
+  if(parts.length !== 3) return null;
+
+  let month, day, year;
+
+  if(parts[0].length === 4){
+    year = Number(parts[0]);
+    month = Number(parts[1]) - 1;
+    day = Number(parts[2]);
+  }else{
+    month = Number(parts[0]) - 1;
+    day = Number(parts[1]);
+    year = Number(parts[2]);
+  }
+
+  const d = new Date(year, month, day);
+  d.setHours(0,0,0,0);
+  return d;
+}
+
+function parsePettyDateInput(text){
+
+  const value = String(text || "").trim();
+
+  const parts = value.split("/");
+
+  if(parts.length !== 3){
+    return null;
+  }
+
+  const month = Number(parts[0]);
+  const day = Number(parts[1]);
+  const year = Number(parts[2]);
+
+  if(!month || !day || !year){
+    return null;
+  }
+
+  if(month < 1 || month > 12){
+    return null;
+  }
+
+  if(day < 1 || day > 31){
+    return null;
+  }
+
+  if(year < 2000){
+    return null;
+  }
+
+  return new Date(year, month - 1, day);
+}
+
+function setTempData(chatId, key, value){
+
+  const props = PropertiesService.getScriptProperties();
+
+  props.setProperty(chatId + "_" + key, value);
+}
+
+
+function getTempData(chatId, key){
+
+  const props = PropertiesService.getScriptProperties();
+
+  return props.getProperty(chatId + "_" + key);
+}
+
+
+function clearTempData(chatId, key){
+
+  const props = PropertiesService.getScriptProperties();
+
+  props.deleteProperty(chatId + "_" + key);
+}
+
+function sendPettyDateSummary(chatId, dateText){
+
+  const targetDate = parsePettyDateInput(dateText);
+
+  if(!targetDate){
+    sendMessage(chatId,
+      "❌ មិនស្គាល់ សូមបញ្ចូលតាម\n\n" +
+      "ឧទាហរណ៍:\n" +
+      "7/15/2026"
+    );
+    return;
+  }
+
+  const sheet = getPettySheet();
+  const data = sheet.getDataRange().getValues();
+
+  let cashIn = 0;
+  let expense = 0;
+
+  for(let i = 1; i < data.length; i++){
+
+    const rowDate = normalizePettyDate(data[i][PETTY_COL_DATE]);
+
+    if(!rowDate) continue;
+
+    if(rowDate.getTime() !== targetDate.getTime()) continue;
+
+    const type = String(data[i][PETTY_COL_TYPE]).trim();
+    const amount = Number(data[i][PETTY_COL_AMOUNT]) || 0;
+
+    if(type === "IN") cashIn += amount;
+    if(type === "OUT") expense += amount;
+  }
+
+  const balance = cashIn - expense;
+  const currentCash = getLastPettyBalance();
+
+  sendMessage(chatId,
+    "🗓 Petty Cash Summary\n" +
+    "Date: " + dateText + "\n\n" +
+    "Cash In: $" + cashIn.toFixed(2) + "\n" +
+    "Expense: $" + expense.toFixed(2) + "\n" +
+    "Balance: $" + balance.toFixed(2) + "\n\n" +
+    "Current Cash: $" + currentCash.toFixed(2)
+  );
+}
+
+function sendPettyDateRangeSummary(chatId, text){
+
+  const parts = String(text || "").split(" to ");
+
+  if(parts.length !== 2){
+    sendMessage(chatId,
+      "❌ Invalid date range\n\n" +
+      "Example:\n" +
+      "7/1/2026 to 7/5/2026"
+    );
+    return;
+  }
+
+  const startDate = parsePettyDateInput(parts[0].trim());
+  const endDate = parsePettyDateInput(parts[1].trim());
+
+  if(!startDate || !endDate){
+    sendMessage(chatId,
+      "❌ Invalid date range\n\n" +
+      "Example:\n" +
+      "7/1/2026 to 7/5/2026"
+    );
+    return;
+  }
+
+  startDate.setHours(0,0,0,0);
+  endDate.setHours(23,59,59,999);
+
+  const sheet = getPettySheet();
+  const data = sheet.getDataRange().getValues();
+
+  let cashIn = 0;
+  let expense = 0;
+
+  for(let i = 1; i < data.length; i++){
+
+    const rowDate = normalizePettyDate(data[i][PETTY_COL_DATE]);
+
+    if(!rowDate) continue;
+
+    if(rowDate < startDate || rowDate > endDate) continue;
+
+    const type = String(data[i][PETTY_COL_TYPE]).trim();
+    const amount = Number(data[i][PETTY_COL_AMOUNT]) || 0;
+
+    if(type === "IN") cashIn += amount;
+    if(type === "OUT") expense += amount;
+  }
+
+  const balance = cashIn - expense;
+  const currentCash = getLastPettyBalance();
+
+  sendMessage(chatId,
+    "📆 Petty Cash Date Range Summary\n\n" +
+    "From: " + parts[0].trim() + "\n" +
+    "To: " + parts[1].trim() + "\n\n" +
+    "Cash In: $" + cashIn.toFixed(2) + "\n" +
+    "Expense: $" + expense.toFixed(2) + "\n" +
+    "Balance: $" + balance.toFixed(2) + "\n\n" +
+    "Current Cash: $" + currentCash.toFixed(2)
+  );
+}
+
+function sendCashBalance(chatId){
+
+  const sheet = getPettySheet();
+  const data = sheet.getDataRange().getValues();
+
+  if(data.length <= 1){
+    sendMessage(
+      chatId,
+      "💵 Cash Balance\n\n" +
+      "Current Cash: $0.00\n" +
+      "Cash In: $0.00\n" +
+      "Expense: $0.00\n" +
+      "Balance: $0.00"
+    );
+    return;
+  }
+
+  // =========================
+  // TODAY'S DAILY TOTALS
+  // =========================
+
+  const today = Utilities.formatDate(
+    new Date(),
+    TIME_ZONE,
+    "M/d/yyyy"
+  );
+
+  let cashIn = 0;
+  let expense = 0;
+
+  for(let i = 1; i < data.length; i++){
+
+    let rowDate = data[i][PETTY_COL_DATE];
+
+    if(rowDate instanceof Date){
+
+      rowDate = Utilities.formatDate(
+        rowDate,
+        TIME_ZONE,
+        "M/d/yyyy"
+      );
+
+    }else{
+
+      rowDate = String(rowDate || "").trim();
+    }
+
+    if(rowDate !== today){
+      continue;
+    }
+
+    const type = String(
+      data[i][PETTY_COL_TYPE] || ""
+    ).trim().toUpperCase();
+
+    const amount = Number(
+      data[i][PETTY_COL_AMOUNT]
+    ) || 0;
+
+    if(type === "IN"){
+      cashIn += amount;
+    }
+
+    if(type === "OUT"){
+      expense += amount;
+    }
+  }
+
+  const dailyBalance = cashIn - expense;
+
+  // =========================
+  // CURRENT CASH
+  // =========================
+
+  const currentCash = getLastPettyBalance();
+
+  // =========================
+  // LAST TRANSACTION
+  // =========================
+
+  const last = data[data.length - 1];
+
+  const type = String(
+    last[PETTY_COL_TYPE] || ""
+  ).trim().toUpperCase();
+
+  const amount = Number(
+    last[PETTY_COL_AMOUNT]
+  ) || 0;
+
+  const remark = last[PETTY_COL_REMARK] || "-";
+
+  const date = formatSheetDate(
+    last[PETTY_COL_DATE]
+  );
+
+  const time = formatSheetTime(
+    last[PETTY_COL_TIME]
+  );
+
+  const icon = type === "OUT" ? "💸" : "💰";
+
+  // =========================
+  // MESSAGE
+  // =========================
+
+  let msg =
+    "💵 Cash Balance\n\n" +
+    "Current Cash: $" + currentCash.toFixed(2) + "\n" +
+    "Cash In: $" + cashIn.toFixed(2) + "\n" +
+    "Expense: $" + expense.toFixed(2) + "\n" +
+    "Balance: $" + dailyBalance.toFixed(2) + "\n\n" +
+    "────────────\n\n" +
+    "Last Transaction\n\n" +
+    icon + " " + type + "\n" +
+    "$" + amount.toFixed(2) + "\n" +
+    "Remark: " + remark + "\n\n" +
+    date + " " + time;
+
+  if(currentCash < PETTY_LOW_ALERT){
+    msg += "\n\n⚠️ LOW CASH";
+  }
+
+  sendMessage(chatId, msg);
+}
+
+function sendPettyHistory(chatId){
+
+  const sheet = getPettySheet();
+  const data = sheet.getDataRange().getValues();
+
+  if(data.length <= 1){
+    sendMessage(chatId, "📜 No Petty Cash history.");
+    return;
+  }
+
+  let msg = "📜 Petty Cash History (Latest 10)\n\n";
+  let count = 1;
+
+  for(let i = data.length - 1; i >= 1; i--){
+
+    const row = data[i];
+
+    const id = row[PETTY_COL_ID] || "-";
+    const date = formatSheetDate(row[PETTY_COL_DATE]);
+    const time = formatSheetTime(row[PETTY_COL_TIME]);
+    const type = String(row[PETTY_COL_TYPE] || "");
+    const amount = Number(row[PETTY_COL_AMOUNT]) || 0;
+    const remark = row[PETTY_COL_REMARK] || "-";
+    const balance = Number(row[PETTY_COL_CURRENT_CASH]) || 0;
+    const user = row[PETTY_COL_USER] || "-";
+
+    const icon = type === "OUT" ? "💸" : "💰";
+
+    msg +=
+      count + ". " + id + "\n" +
+      date + " " + time + "\n" +
+      icon + " " + type + " $" + amount.toFixed(2) + "\n" +
+      "Remark: " + remark + "\n" +
+      "Balance: $" + balance.toFixed(2) + "\n" +
+      "User: " + user + "\n" +
+      "----------------\n";
+
+    count++;
+
+    if(count > 10){
+      break;
+    }
+  }
+
+  sendMessage(chatId, msg);
+  
+}
+
+function sortPettyCash(){
+
+  const sheet = getPettySheet();
+
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+
+  if(lastRow <= 2) return;
+
+  const range = sheet.getRange(2, 1, lastRow - 1, lastCol);
+
+  range.sort([
+    {column: PETTY_COL_DATE + 1, ascending: true},
+    {column: PETTY_COL_TIME + 1, ascending: true}
+  ]);
+}
+
+function recalculatePettyBalance(){
+
+  const sheet = getPettySheet();
+  const lastRow = sheet.getLastRow();
+
+  if(lastRow <= 1){
+    return;
+  }
+
+  const lastCol = sheet.getLastColumn();
+
+  const data = sheet
+    .getRange(2, 1, lastRow - 1, lastCol)
+    .getValues();
+
+  let balance = 0;
+
+  for(let i = 0; i < data.length; i++){
+
+    const type = String(
+      data[i][PETTY_COL_TYPE] || ""
+    ).trim().toUpperCase();
+
+    const amount = Number(
+      data[i][PETTY_COL_AMOUNT]
+    ) || 0;
+
+    if(type === "IN"){
+      balance += amount;
+    }
+
+    if(type === "OUT"){
+      balance -= amount;
+    }
+
+    // Recalculate both columns
+    data[i][PETTY_COL_RUNNING_BALANCE] = balance;
+    data[i][PETTY_COL_CURRENT_CASH] = balance;
+  }
+
+  sheet
+    .getRange(2, 1, data.length, lastCol)
+    .setValues(data);
+}
+
+function findPettyRowById(id){
+
+  id = String(id || "").trim().toUpperCase();
+
+  if(!id){
+    return null;
+  }
+
+  const sheet = getPettySheet();
+  const data = sheet.getDataRange().getValues();
+
+  for(let i = 1; i < data.length; i++){
+
+    const rowId = String(data[i][PETTY_COL_ID] || "").trim().toUpperCase();
+
+    if(rowId === id){
+      return i + 1;
+    }
+  }
+
+  return null;
+}
+
+
+function requestDeletePettyCash(chatId, id){
+
+  id = String(id || "").trim().toUpperCase();
+
+  const rowNumber = findPettyRowById(id);
+
+  if(!rowNumber){
+
+    sendMessage(
+      chatId,
+      "❌ Petty Cash ID not found\n\n" +
+      "Example:\n" +
+      "PC000017"
+    );
+
+    return;
+  }
+
+  const sheet = getPettySheet();
+
+  const type = String(
+    sheet.getRange(
+      rowNumber,
+      PETTY_COL_TYPE + 1
+    ).getValue()
+  ).trim();
+
+  const amount = Number(
+    sheet.getRange(
+      rowNumber,
+      PETTY_COL_AMOUNT + 1
+    ).getValue()
+  ) || 0;
+
+  const remark =
+    sheet.getRange(
+      rowNumber,
+      PETTY_COL_REMARK + 1
+    ).getValue() || "-";
+
+  const typeText =
+    type === "OUT"
+      ? "💸 Expense"
+      : "💰 Cash In";
+
+  const text =
+    "⚠️ Confirm Delete Petty Cash\n\n" +
+    "ID: " + id + "\n" +
+    "Type: " + typeText + "\n" +
+    "Amount: $" + amount.toFixed(2) + "\n" +
+    "Remark: " + remark + "\n\n" +
+    "Are you sure you want to delete this transaction?";
+
+  const payload = {
+    chat_id: chatId,
+    text: text,
+    reply_markup: {
+      inline_keyboard: [
+        [
+          {
+            text: "✅ Confirm",
+            callback_data: "PETTY_DELETE_CONFIRM:" + id
+          },
+          {
+            text: "❌ Cancel",
+            callback_data: "PETTY_DELETE_CANCEL:" + id
+          }
+        ]
+      ]
+    }
+  };
+
+  const url =
+    "https://api.telegram.org/bot" +
+    TOKEN +
+    "/sendMessage";
+
+  UrlFetchApp.fetch(url, {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  });
+}
+
+
+function deletePettyCashById(chatId, id){
+
+  id = String(id || "").trim().toUpperCase();
+
+  const sheet = getPettySheet();
+  const rowNumber = findPettyRowById(id);
+
+  if(!rowNumber){
+    sendMessage(
+      chatId,
+      "❌ Petty Cash ID not found."
+    );
+    return;
+  }
+
+  const type = String(
+    sheet.getRange(rowNumber, PETTY_COL_TYPE + 1).getValue()
+  ).trim();
+
+  const amount = Number(
+    sheet.getRange(rowNumber, PETTY_COL_AMOUNT + 1).getValue()
+  ) || 0;
+
+  const remark =
+    sheet.getRange(rowNumber, PETTY_COL_REMARK + 1).getValue() || "-";
+
+  const typeText = type === "OUT"
+    ? "💸 Expense"
+    : "💰 Cash In";
+
+  // Delete only after confirmation
+  sheet.deleteRow(rowNumber);
+
+  // Re-arrange and recalculate everything
+  sortPettyCash();
+  recalculatePettyBalance();
+
+  const currentCash = getLastPettyBalance();
+
+  sendMessage(
+    chatId,
+    "✅ Petty Cash deleted\n\n" +
+    "ID: " + id + "\n" +
+    "Type: " + typeText + "\n" +
+    "Amount: $" + amount.toFixed(2) + "\n" +
+    "Remark: " + remark + "\n\n" +
+    "Current Cash: $" + currentCash.toFixed(2) + "\n" +
+    "Balance recalculated."
+  );
+}
+
+function editPettyCashById(chatId, id, newText){
+
+  id = String(id || "").trim().toUpperCase();
+
+  const parsed = parsePettyInput(newText);
+
+  if(!parsed){
+    sendMessage(chatId,
+      "❌ មិនត្រឹមត្រូវ សូមបញ្ចូលតាម\n\n" +
+      "ឧទាហរណ៍:\n" +
+      "Deposit 100\n" +
+      "10.88 បានពីភ្ញៀវ\n" +
+      "10.01"
+    );
+    return;
+  }
+
+  const sheet = getPettySheet();
+  const rowNumber = findPettyRowById(id);
+
+  if(!rowNumber){
+    sendMessage(chatId,
+      "❌ Petty Cash ID not found\n\n" +
+      "ឧទាហរណ៍:\n" +
+      "PC000001"
+    );
+    return;
+  }
+
+  const type = String(sheet.getRange(rowNumber, PETTY_COL_TYPE + 1).getValue()).trim();
+  const typeText = type === "OUT" ? "💸 Expense" : "💰 Cash In";
+
+  sheet.getRange(rowNumber, PETTY_COL_AMOUNT + 1).setValue(parsed.amount);
+  sheet.getRange(rowNumber, PETTY_COL_REMARK + 1).setValue(parsed.remark);
+  sheet.getRange(rowNumber, PETTY_COL_RAW + 1).setValue(parsed.raw);
+
+  sortPettyCash();
+  recalculatePettyBalance();
+
+  const currentCash = getLastPettyBalance();
+
+  sendMessage(chatId,
+    "✅ Petty Cash edited\n\n" +
+    "ID: " + id + "\n" +
+    "Type: " + typeText + "\n" +
+    "New Amount: $" + parsed.amount.toFixed(2) + "\n" +
+    "Remark: " + (parsed.remark || "-") + "\n\n" +
+    "Current Cash: $" + currentCash.toFixed(2) + "\n" +
+    "Balance recalculated."
+  );
+}
+
+function removePettyDeleteButtons(callback){
+
+  const chatId = callback.message.chat.id;
+  const messageId = callback.message.message_id;
+
+  const url =
+    "https://api.telegram.org/bot" +
+    TOKEN +
+    "/editMessageReplyMarkup";
+
+  const payload = {
+    chat_id: chatId,
+    message_id: messageId,
+    reply_markup: {
+      inline_keyboard: []
+    }
+  };
+
+  UrlFetchApp.fetch(url, {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  });
+}

@@ -1,0 +1,36 @@
+function setupDashboardRefresh24h(){
+
+  deleteDashboardRefreshTriggers();
+
+  ScriptApp.newTrigger("refreshDashboard")
+    .timeBased()
+    .everyDays(1)
+    .atHour(2)
+    .create();
+}
+
+
+function setupDashboardRefresh48h(){
+
+  deleteDashboardRefreshTriggers();
+
+  ScriptApp.newTrigger("refreshDashboard")
+    .timeBased()
+    .everyDays(2)
+    .atHour(2)
+    .create();
+}
+
+
+function deleteDashboardRefreshTriggers(){
+
+  const triggers = ScriptApp.getProjectTriggers();
+
+  for(let i = 0; i < triggers.length; i++){
+
+    if(triggers[i].getHandlerFunction() === "refreshDashboard"){
+
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
+}

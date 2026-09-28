@@ -1,0 +1,605 @@
+function parseMissingTransactionDateTime(text){
+
+  text = String(text || "").trim();
+
+  const match = text.match(/^(.+?)\s+(.+)$/);
+
+  if(!match){
+    return null;
+  }
+
+  const dateObj = parseManualTransactionDate(match[1]);
+  const timeObj = parseManualTransactionTime(match[2]);
+
+  if(!dateObj || !timeObj){
+    return null;
+  }
+
+  return {
+    dateObj: dateObj,
+    timeObj: timeObj,
+    dateText: Utilities.formatDate(dateObj, TIME_ZONE, "M/d/yyyy"),
+    timeText: Utilities.formatDate(timeObj, TIME_ZONE, "HH:mm:ss")
+  };
+}
+
+
+function parseManualTransactionDate(text){
+
+  text = String(text || "").trim();
+
+  let parts;
+
+  if(text.indexOf("-") > -1){
+
+    parts = text.split("-");
+
+    if(parts.length !== 3) return null;
+
+    const year = Number(parts[0]);
+    const month = Number(parts[1]);
+    const day = Number(parts[2]);
+
+    if(!year || !month || !day) return null;
+
+    return new Date(year, month - 1, day);
+  }
+
+  if(text.indexOf("/") > -1){
+
+    parts = text.split("/");
+
+    if(parts.length !== 3) return null;
+
+    const month = Number(parts[0]);
+    const day = Number(parts[1]);
+    const year = Number(parts[2]);
+
+    if(!year || !month || !day) return null;
+
+    return new Date(year, month - 1, day);
+  }
+
+  return null;
+}
+
+
+function parseManualTransactionTime(text){
+
+  text = String(text || "").trim().toUpperCase();
+
+  const match = text.match(/^(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?\s*(AM|PM)?$/);
+
+  if(!match){
+    return null;
+  }
+
+  let hour = Number(match[1]);
+  const minute = Number(match[2] || 0);
+  const second = Number(match[3] || 0);
+  const ampm = match[4];
+
+  if(hour < 0 || hour > 23) return null;
+  if(minute < 0 || minute > 59) return null;
+  if(second < 0 || second > 59) return null;
+
+  if(ampm === "PM" && hour < 12){
+    hour += 12;
+  }
+
+  if(ampm === "AM" && hour === 12){
+    hour = 0;
+  }
+
+  return new Date(1899, 11, 30, hour, minute, second);
+}
+
+
+function parseMissingAmountCurrency(text){
+
+  text = String(text || "").trim();
+
+  let currency = "USD";
+
+  if(text.indexOf("៛") > -1 || /KHR/i.test(text)){
+    currency = "KHR";
+  }
+
+  if(text.indexOf("$") > -1 || /USD/i.test(text)){
+    currency = "USD";
+  }
+
+  const match = text.replace(/,/g, "").match(/(\d+(?:\.\d+)?)/);
+
+  if(!match){
+    return null;
+  }
+
+  const amount = Number(match[1]);
+
+  if(!amount || amount <= 0){
+    return null;
+  }
+
+  return {
+    amount: amount,
+    currency: currency
+  };
+}
+
+
+function transactionIdExists(trxId){
+
+  trxId = String(trxId || "").trim();
+
+  if(!trxId){
+    return false;
+  }
+
+  const sheet = SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getSheetByName(SHEET_NAME);
+
+  const lastRow = sheet.getLastRow();
+
+  if(lastRow <= 1){
+    return false;
+  }
+
+  const values = sheet
+    .getRange(2, COL_TRXID + 1, lastRow - 1, 1)
+    .getValues();
+
+  for(let i = 0; i < values.length; i++){
+
+    if(String(values[i][0]).trim() === trxId){
+      return true;
+    }
+  }
+
+  return false;
+}
+
+
+function saveMissingTransaction(chatId, trxId){
+
+  trxId = String(trxId || "").trim();
+
+  if(transactionIdExists(trxId)){
+    sendMessage(chatId,
+      "⚠️ Duplicate Transaction\n\n" +
+      "Trx ID already exists:\n" +
+      trxId
+    );
+    return;
+  }
+
+  const dateText = getTempData(chatId, "missing_trx_date");
+  const timeText = getTempData(chatId, "missing_trx_time");
+  const name = getTempData(chatId, "missing_trx_name");
+  const amount = Number(getTempData(chatId, "missing_trx_amount")) || 0;
+  const currency = getTempData(chatId, "missing_trx_currency") || "USD";
+  const merchant = getTempData(chatId, "missing_trx_merchant") || "PHTEAS DECOR";
+
+  const dateObj = parseManualTransactionDate(dateText);
+  const timeObj = parseManualTransactionTime(timeText);
+
+  if(!dateObj || !timeObj || !name || !amount || !trxId){
+
+    sendMessage(chatId,
+      "❌ Missing transaction data. Please try again.\n\n" +
+      "Date: " + dateText + "\n" +
+      "Time: " + timeText + "\n" +
+      "Name: " + name + "\n" +
+      "Amount: " + amount + "\n" +
+      "Currency: " + currency + "\n" +
+      "Merchant: " + merchant + "\n" +
+      "Trx ID: " + trxId
+    );
+
+    return;
+  }
+
+  const sheet = SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getSheetByName(SHEET_NAME);
+
+  sheet.appendRow([
+    dateObj,
+    timeObj,
+    name,
+    amount,
+    currency,
+    merchant,
+    "",
+    trxId,
+    "MANUAL MISSING TRANSACTION"
+  ]);
+
+  sortTransactions();
+
+  // Dashboard refresh disabled for faster saving
+  // Dashboard will refresh by daily trigger instead
+  // try{
+  //   refreshDashboard();
+  // }catch(err){
+  //   Logger.log("Dashboard refresh failed: " + err);
+  // }
+
+  clearMissingTransactionTemp(chatId);
+
+  sendMessage(chatId,
+    "✅ Missing Transaction saved\n\n" +
+    "Date: " + dateText + "\n" +
+    "Time: " + timeText + "\n" +
+    "Name: " + name + "\n" +
+    "Amount: " + currency + " " + amount.toFixed(2) + "\n" +
+    "Merchant: " + merchant + "\n" +
+    "Trx ID: " + trxId
+  );
+  clearState(chatId);
+  sendMainMenu(chatId);
+}
+
+
+function clearMissingTransactionTemp(chatId){
+
+  clearTempData(chatId, "missing_trx_date");
+  clearTempData(chatId, "missing_trx_time");
+  clearTempData(chatId, "missing_trx_name");
+  clearTempData(chatId, "missing_trx_amount");
+  clearTempData(chatId, "missing_trx_currency");
+  clearTempData(chatId, "missing_trx_merchant");
+}
+
+
+function sendMissingTransactionRange(chatId, rangeText, page){
+
+  const range = parseMissingTransactionRange(rangeText);
+
+  if(!range){
+    sendMessage(chatId,
+      "❌ Invalid date range\n\n" +
+      "Example:\n" +
+      "7/1/2026 to 7/15/2026"
+    );
+    return;
+  }
+
+  setTempData(chatId, "missing_trx_range_text", rangeText);
+
+  const records = getMissingTransactionsInRange(range.startDate, range.endDate);
+
+  if(records.length === 0){
+    sendMessage(chatId,
+      "📋 Missing Transactions\n\n" +
+      "No missing transactions found in this date range."
+    );
+    return;
+  }
+
+  sendMissingTransactionPage(chatId, records, page);
+}
+
+
+function parseMissingTransactionRange(text){
+
+  text = String(text || "").trim();
+
+  const parts = text.split(" to ");
+
+  if(parts.length !== 2){
+    return null;
+  }
+
+  const startDate = parsePettyDateInput(parts[0].trim());
+  const endDate = parsePettyDateInput(parts[1].trim());
+
+  if(!startDate || !endDate){
+    return null;
+  }
+
+  startDate.setHours(0, 0, 0, 0);
+  endDate.setHours(23, 59, 59, 999);
+
+  return {
+    startDate: startDate,
+    endDate: endDate
+  };
+}
+
+
+function getMissingTransactionsInRange(startDate, endDate){
+
+  const sheet = SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getSheetByName(SHEET_NAME);
+
+  const data = sheet.getDataRange().getValues();
+
+  const records = [];
+
+  for(let i = 1; i < data.length; i++){
+
+    const row = data[i];
+
+    const raw = String(row[COL_RAW] || "").trim();
+
+    if(
+      raw !== "MANUAL MISSING TRANSACTION" &&
+      raw !== "IMAGE SLIP TRANSACTION"
+    ){
+      continue;
+    }
+
+    const rowDate = normalizePettyDate(row[COL_DATE]);
+
+    if(!rowDate){
+      continue;
+    }
+
+    if(rowDate < startDate || rowDate > endDate){
+      continue;
+    }
+
+    records.push({
+      date: formatSheetDate(row[COL_DATE]),
+      time: formatSheetTime(row[COL_TIME]),
+      name: row[COL_NAME] || "-",
+      amount: Number(row[COL_AMOUNT]) || 0,
+      currency: row[COL_CURRENCY] || "USD",
+      merchant: row[COL_MERCHANT] || "-",
+      trxId: row[COL_TRXID] || "-",
+      source: raw
+    });
+  }
+
+  // Newest first
+  records.reverse();
+
+  return records;
+}
+
+
+function sendMissingTransactionPage(chatId, records, page){
+
+  const pageSize = 10;
+  const totalRecords = records.length;
+  const totalPages = Math.ceil(totalRecords / pageSize);
+
+  page = Number(page) || 1;
+
+  if(page < 1){
+    page = 1;
+  }
+
+  if(page > totalPages){
+    page = totalPages;
+  }
+
+  const startIndex = (page - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, totalRecords);
+
+  let msg =
+    "📋 Missing Transactions\n\n" +
+    "Page: " + page + " / " + totalPages + "\n" +
+    "Total: " + totalRecords + "\n\n";
+
+  for(let i = startIndex; i < endIndex; i++){
+
+    const item = records[i];
+
+    const number = i + 1;
+
+    const sourceIcon =
+      item.source === "IMAGE SLIP TRANSACTION"
+      ? "📷 Slip"
+      : "✍️ Manual";
+
+    msg +=
+      number + ". " + sourceIcon + "\n" +
+      item.date + " " + item.time + "\n" +
+      "Name: " + item.name + "\n" +
+      "Amount: " + item.currency + " " + item.amount.toFixed(2) + "\n" +
+      "Merchant: " + item.merchant + "\n" +
+      "Trx ID: " + item.trxId + "\n" +
+      "----------------\n";
+  }
+
+  const inlineKeyboard = [];
+
+  const pageButtons = [];
+
+  if(page > 1){
+    pageButtons.push({
+      text: "⬅️ Previous",
+      callback_data: "MISS_TRX_PAGE_" + (page - 1)
+    });
+  }
+
+  if(page < totalPages){
+    pageButtons.push({
+      text: "Next ➡️",
+      callback_data: "MISS_TRX_PAGE_" + (page + 1)
+    });
+  }
+
+  if(pageButtons.length > 0){
+    inlineKeyboard.push(pageButtons);
+  }
+
+  sendInlineMessage(chatId, msg, inlineKeyboard);
+}
+
+
+function handleMissingTransactionPageCallback(callbackQuery){
+
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+  const data = callbackQuery.data;
+
+  answerCallbackQuery(callbackQuery.id);
+
+  if(String(data).indexOf("MISS_TRX_PAGE_") !== 0){
+    return;
+  }
+
+  const page = Number(String(data).replace("MISS_TRX_PAGE_", ""));
+
+  const rangeText = getTempData(chatId, "missing_trx_range_text");
+
+  if(!rangeText){
+    editInlineMessage(chatId, messageId,
+      "❌ Date range expired.\n\n" +
+      "Please click 📋 Show Missing Transactions again."
+    );
+    return;
+  }
+
+  const range = parseMissingTransactionRange(rangeText);
+
+  if(!range){
+    editInlineMessage(chatId, messageId,
+      "❌ Invalid saved date range.\n\n" +
+      "Please try again."
+    );
+    return;
+  }
+
+  const records = getMissingTransactionsInRange(range.startDate, range.endDate);
+
+  editMissingTransactionPage(chatId, messageId, records, page);
+}
+
+
+function editMissingTransactionPage(chatId, messageId, records, page){
+
+  const pageSize = 10;
+  const totalRecords = records.length;
+  const totalPages = Math.ceil(totalRecords / pageSize);
+
+  page = Number(page) || 1;
+
+  if(page < 1){
+    page = 1;
+  }
+
+  if(page > totalPages){
+    page = totalPages;
+  }
+
+  const startIndex = (page - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, totalRecords);
+
+  let msg =
+    "📋 Missing Transactions\n\n" +
+    "Page: " + page + " / " + totalPages + "\n" +
+    "Total: " + totalRecords + "\n\n";
+
+  for(let i = startIndex; i < endIndex; i++){
+
+    const item = records[i];
+
+    const number = i + 1;
+
+    const sourceIcon =
+      item.source === "IMAGE SLIP TRANSACTION"
+      ? "📷 Slip"
+      : "✍️ Manual";
+
+    msg +=
+      number + ". " + sourceIcon + "\n" +
+      item.date + " " + item.time + "\n" +
+      "Name: " + item.name + "\n" +
+      "Amount: " + item.currency + " " + item.amount.toFixed(2) + "\n" +
+      "Merchant: " + item.merchant + "\n" +
+      "Trx ID: " + item.trxId + "\n" +
+      "----------------\n";
+  }
+
+  const inlineKeyboard = [];
+
+  const pageButtons = [];
+
+  if(page > 1){
+    pageButtons.push({
+      text: "⬅️ Previous",
+      callback_data: "MISS_TRX_PAGE_" + (page - 1)
+    });
+  }
+
+  if(page < totalPages){
+    pageButtons.push({
+      text: "Next ➡️",
+      callback_data: "MISS_TRX_PAGE_" + (page + 1)
+    });
+  }
+
+  if(pageButtons.length > 0){
+    inlineKeyboard.push(pageButtons);
+  }
+
+  editInlineMessage(chatId, messageId, msg, inlineKeyboard);
+}
+
+
+function sendInlineMessage(chatId, text, inlineKeyboard){
+
+  const url = "https://api.telegram.org/bot" + TOKEN + "/sendMessage";
+
+  const payload = {
+    chat_id: chatId,
+    text: text,
+    reply_markup: {
+      inline_keyboard: inlineKeyboard
+    }
+  };
+
+  UrlFetchApp.fetch(url, {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify(payload)
+  });
+}
+
+
+function editInlineMessage(chatId, messageId, text, inlineKeyboard){
+
+  const url = "https://api.telegram.org/bot" + TOKEN + "/editMessageText";
+
+  const payload = {
+    chat_id: chatId,
+    message_id: messageId,
+    text: text
+  };
+
+  if(inlineKeyboard){
+    payload.reply_markup = {
+      inline_keyboard: inlineKeyboard
+    };
+  }
+
+  UrlFetchApp.fetch(url, {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  });
+}
+
+
+function answerCallbackQuery(callbackQueryId){
+
+  const url = "https://api.telegram.org/bot" + TOKEN + "/answerCallbackQuery";
+
+  const payload = {
+    callback_query_id: callbackQueryId
+  };
+
+  UrlFetchApp.fetch(url, {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  });
+}

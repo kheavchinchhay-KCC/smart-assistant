@@ -1,0 +1,188 @@
+function showKeyboard(chatId, text, keyboard){
+
+  if(!chatId){
+    Logger.log("showKeyboard error: chatId is empty");
+    return;
+  }
+
+  const url = "https://api.telegram.org/bot" + TOKEN + "/sendMessage";
+
+  UrlFetchApp.fetch(url, {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify({
+      chat_id: chatId,
+      text: text,
+      reply_markup: keyboard
+    })
+  });
+}
+
+
+function sendMainMenu(chatId){
+
+  if(!chatId){
+    Logger.log("sendMainMenu error: chatId is empty");
+    return;
+  }
+
+  const keyboard = {
+    keyboard: [
+      [
+        {text: BTN_REPORTS},
+        {text: BTN_SEARCH}
+      ],
+      [
+        {text: BTN_CASH_IN},
+        {text: BTN_EXPENSE}
+      ],
+      [
+        {text: BTN_TODAY},
+        {text: BTN_CASH_BALANCE}
+      ],
+      [
+        {text: BTN_CASH_SUMMARY}
+      ]
+    ],
+    resize_keyboard: true,
+    persistent: true
+  };
+
+  showKeyboard(chatId, "⚙️ សូមជ្រើសរើសមុខងារផ្សេងៗនៅលើ Keyboard ខាងក្រោម ឬ ទំលាក់ ប្រតិបត្តិការធនាគា ឬ slip ប្រព័ន្ធនិងធ្វើការកត់ត្រាទុក៖", keyboard);
+}
+
+
+function sendReportMenu(chatId){
+
+  const keyboard = {
+    keyboard: [
+      [
+        {text: BTN_YESTERDAY}
+      ],
+      [
+        {text: BTN_WEEKLY},
+        {text: BTN_MONTHLY}
+      ],
+      [
+        {text: BTN_DATE},
+        {text: BTN_DATERANGE}
+      ],
+      [
+        {text: BTN_SHOW_MISSING_TRANSACTION}
+      ],
+      [
+        {text: BTN_MISSING_TRANSACTION}
+      ],
+      [
+        {text: BTN_DELETE_TRANSACTION}
+      ],
+      [
+        {text: BTN_BACK}
+      ]
+    ],
+    resize_keyboard: true,
+    persistent: true
+  };
+
+  showKeyboard(chatId, MSG_INVISIBLE, keyboard);
+}
+
+
+function sendSearchMenu(chatId){
+
+  const keyboard = {
+    keyboard: [
+      [
+        {text: BTN_CUSTOMER},
+        {text: BTN_TRX}
+      ],
+      [
+        {text: BTN_MERCHANT}
+      ],
+      [
+        {text: BTN_TOP_CUSTOMERS},
+        {text: BTN_TOP_MERCHANTS}
+      ],
+      [
+        {text: BTN_BACK}
+      ]
+    ],
+    resize_keyboard: true,
+    persistent: true
+  };
+
+  showKeyboard(chatId, MSG_INVISIBLE, keyboard);
+}
+
+
+function sendPettySummaryMenu(chatId){
+
+  const keyboard = {
+    keyboard: [
+      [
+        {text: BTN_PETTY_DAILY},
+        {text: BTN_PETTY_WEEKLY}
+      ],
+      [
+        {text: BTN_PETTY_MONTHLY}
+      ],
+      [
+        {text: BTN_PETTY_DATE},
+        {text: BTN_PETTY_DATERANGE}
+      ],
+      [
+        {text: BTN_PETTY_HISTORY},
+        {text: BTN_PETTY_MISSING}
+      ],
+      [
+        {text: BTN_PETTY_DELETE},
+        {text: BTN_PETTY_EDIT}
+      ],
+      [
+        {text: BTN_BACK}
+      ]
+    ],
+    resize_keyboard: true,
+    persistent: true
+  };
+
+  showKeyboard(chatId, MSG_INVISIBLE, keyboard);
+}
+
+function sendMissingTransactionMerchantMenu(chatId){
+
+  const keyboard = {
+    keyboard: [
+      [
+        {text: BTN_DEFAULT_MERCHANT},
+        {text: BTN_OTHER_MERCHANT}
+      ],
+      [
+        {text: BTN_BACK}
+      ]
+    ],
+    resize_keyboard: true,
+    persistent: true
+  };
+
+  showKeyboard(chatId, "🏪 Choose merchant:", keyboard);
+}
+
+function sendPettyMissingTypeMenu(chatId){
+
+  const keyboard = {
+    keyboard: [
+      [
+        {text: BTN_MISSING_CASH_IN},
+        {text: BTN_MISSING_EXPENSE}
+      ],
+      [
+        {text: BTN_BACK}
+      ]
+    ],
+    resize_keyboard: true,
+    persistent: true
+  };
+
+  showKeyboard(chatId, "➕ Choose missing petty cash type:", keyboard);
+}

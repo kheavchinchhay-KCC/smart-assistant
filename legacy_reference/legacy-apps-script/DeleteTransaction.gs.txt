@@ -1,0 +1,180 @@
+function findTransactionRowByTrxId(trxId){
+
+  trxId = String(trxId || "").trim();
+
+  if(!trxId){
+    return null;
+  }
+
+  const sheet = SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getSheetByName(SHEET_NAME);
+
+  const lastRow = sheet.getLastRow();
+
+  if(lastRow <= 1){
+    return null;
+  }
+
+  const trxRange = sheet.getRange(2, COL_TRXID + 1, lastRow - 1, 1);
+
+  const found = trxRange
+    .createTextFinder(trxId)
+    .matchEntireCell(true)
+    .findNext();
+
+  if(!found){
+    return null;
+  }
+
+  return found.getRow();
+}
+
+
+function previewDeleteTransaction(chatId, trxId){
+
+  trxId = String(trxId || "").trim();
+
+  const sheet = SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getSheetByName(SHEET_NAME);
+
+  const rowNumber = findTransactionRowByTrxId(trxId);
+
+  if(!rowNumber){
+
+    sendMessage(chatId,
+      "❌ Transaction not found\n\n" +
+      "Trx ID:\n" +
+      trxId
+    );
+
+    return;
+  }
+
+  const row = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
+
+  setTempData(chatId, "delete_trx_id", trxId);
+  setTempData(chatId, "delete_trx_row", String(rowNumber));
+
+  const keyboard = {
+    keyboard: [
+      [
+        {text: BTN_CONFIRM_DELETE_TRANSACTION}
+      ],
+      [
+        {text: BTN_CANCEL_DELETE_TRANSACTION}
+      ],
+      [
+        {text: BTN_BACK}
+      ]
+    ],
+    resize_keyboard: true,
+    persistent: true
+  };
+
+  const date = formatSheetDate(row[COL_DATE]);
+  const time = formatSheetTime(row[COL_TIME]);
+  const name = row[COL_NAME] || "-";
+  const amount = Number(row[COL_AMOUNT]) || 0;
+  const currency = row[COL_CURRENCY] || "USD";
+  const merchant = row[COL_MERCHANT] || "-";
+  const remark = row[COL_REMARK] || "-";
+  const raw = row[COL_RAW] || "-";
+
+  showKeyboard(chatId,
+    "⚠️ Confirm Delete Transaction\n\n" +
+    "Please check carefully before deleting:\n\n" +
+    "Date: " + date + "\n" +
+    "Time: " + time + "\n" +
+    "Name: " + name + "\n" +
+    "Amount: " + currency + " " + amount.toFixed(2) + "\n" +
+    "Merchant: " + merchant + "\n" +
+    "Remark: " + remark + "\n" +
+    "Trx ID: " + trxId + "\n" +
+    "Source: " + raw + "\n\n" +
+    "Click ✅ Confirm Delete Transaction to delete.",
+    keyboard
+  );
+
+  setState(chatId, "delete_trx_confirm");
+}
+
+
+function confirmDeleteTransaction(chatId){
+
+  const trxId = getTempData(chatId, "delete_trx_id");
+
+  if(!trxId){
+
+    sendMessage(chatId,
+      "❌ No transaction selected for delete.\n\n" +
+      "Please start again."
+    );
+
+    clearDeleteTransactionTemp(chatId);
+    clearState(chatId);
+    sendMainMenu(chatId);
+
+    return;
+  }
+
+  const sheet = SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getSheetByName(SHEET_NAME);
+
+  const rowNumber = findTransactionRowByTrxId(trxId);
+
+  if(!rowNumber){
+
+    sendMessage(chatId,
+      "❌ Transaction already deleted or not found.\n\n" +
+      "Trx ID:\n" +
+      trxId
+    );
+
+    clearDeleteTransactionTemp(chatId);
+    clearState(chatId);
+    sendMainMenu(chatId);
+
+    return;
+  }
+
+  const row = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
+
+  const date = formatSheetDate(row[COL_DATE]);
+  const time = formatSheetTime(row[COL_TIME]);
+  const name = row[COL_NAME] || "-";
+  const amount = Number(row[COL_AMOUNT]) || 0;
+  const currency = row[COL_CURRENCY] || "USD";
+  const merchant = row[COL_MERCHANT] || "-";
+
+  sheet.deleteRow(rowNumber);
+
+  sortTransactions();
+
+  // Dashboard refresh disabled for faster saving
+  // Dashboard will refresh by daily trigger instead
+
+  clearDeleteTransactionTemp(chatId);
+  clearState(chatId);
+
+  sendMessage(chatId,
+    "✅ Transaction deleted\n\n" +
+    "Date: " + date + "\n" +
+    "Time: " + time + "\n" +
+    "Name: " + name + "\n" +
+    "Amount: " + currency + " " + amount.toFixed(2) + "\n" +
+    "Merchant: " + merchant + "\n" +
+    "Trx ID: " + trxId
+  );
+
+  sendMainMenu(chatId);
+}
+
+
+function clearDeleteTransactionTemp(chatId){
+
+  clearTempData(chatId, "delete_trx_id");
+  clearTempData(chatId, "delete_trx_row");
+}

@@ -1,0 +1,109 @@
+function saveTransaction(text) {
+
+  const sheet = SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getSheetByName("Transactions");
+
+  const trxMatch = text.match(/Trx\.\s*ID:\s*(\d+)/i);
+
+  if (!trxMatch) {
+    return {
+      success: false,
+      message: "❌ Transaction ID not found."
+    };
+  }
+
+  const trxId = trxMatch[1].trim();
+
+  const finder = sheet
+    .getRange("H:H")
+    .createTextFinder(trxId)
+    .matchEntireCell(true);
+
+  if (finder.findNext()) {
+    return {
+      success: false,
+      message: "⚠️ ប្រតិបត្តិការ ជាន់គ្នា បានតក់ត្រាម្តងរួចហើយ⚠️\nTrx ID: " + trxId
+    };
+  }
+
+  let amount = "";
+  let currency = "USD";
+
+  const amountMatch = text.match(/([$៛])\s*([\d,]+(?:\.\d+)?)/);
+
+  if (amountMatch) {
+    currency = amountMatch[1] == "$" ? "USD" : "KHR";
+    amount = amountMatch[2].replace(/,/g, "");
+  }
+
+  let name = "";
+
+  let m = text.match(/ដោយ\s(.+?)\sលើថ្ងៃ/);
+
+  if (m) name = m[1];
+
+  if (!name) {
+    m = text.match(/paid by\s(.+?)\son/i);
+    if (m) name = m[1];
+  }
+
+  let merchant = "";
+
+  m = text.match(/នៅហាង\s(.+?)\./);
+  if (m) merchant = m[1];
+
+  if (!merchant) {
+    m = text.match(/at\s(.+?)\sby/i);
+    if (m) merchant = m[1];
+  }
+
+  let remark = "";
+
+  m = text.match(/Remark:\s*(.*?)\s*Trx\./i);
+  if (m) remark = m[1].trim();
+
+  let transactionDate = "";
+  let transactionTime = "";
+
+  m = text.match(/on\s([A-Za-z]{3})\s(\d{1,2}),\s(\d{1,2}:\d{2}\s(?:AM|PM))/i);
+
+  if (!m) {
+    m = text.match(/លើថ្ងៃ\s([A-Za-z]{3})\s(\d{1,2}),\s(\d{1,2}:\d{2}\s(?:AM|PM))/i);
+  }
+
+  if (m) {
+
+    const months = {
+      Jan:1, Feb:2, Mar:3, Apr:4, May:5, Jun:6,
+      Jul:7, Aug:8, Sep:9, Oct:10, Nov:11, Dec:12
+    };
+
+    const month = months[m[1]];
+    const day = parseInt(m[2], 10);
+    const year = new Date().getFullYear();
+
+    transactionDate = month + "/" + day + "/" + year;
+    transactionTime = m[3].toUpperCase();
+
+  }
+
+  sheet.appendRow([
+    transactionDate,
+    transactionTime,
+    name,
+    amount,
+    currency,
+    merchant,
+    remark,
+    trxId,
+    text
+  ]);
+
+  sortTransactions();
+  
+  return {
+    success: true,
+    message: "✅បានកត់ត្រា\nTrx ID: " + trxId
+  };
+}

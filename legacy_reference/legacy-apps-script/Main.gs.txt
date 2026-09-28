@@ -1,0 +1,679 @@
+function doPost(e){
+
+  try {
+
+    const update = JSON.parse(e.postData.contents);
+
+    if(update.callback_query){
+
+      const callback = update.callback_query;
+      const data = String(callback.data || "");
+
+      // ==============================
+      // Slip Queue
+      // ==============================
+      if(data.indexOf("SLIPQ_") === 0){
+
+        handleSlipQueueCallback(callback);
+        return;
+      }
+
+      // ==============================
+      // Missing Transaction Pagination
+      // ==============================
+      if(data.indexOf("MISS_TRX_PAGE_") === 0){
+
+        handleMissingTransactionPageCallback(callback);
+        return;
+      }
+
+      // ==============================
+      // Petty Cash Delete - Confirm
+      // ==============================
+      if(data.indexOf("PETTY_DELETE_CONFIRM:") === 0){
+
+        const chatId = callback.message.chat.id;
+
+        if(!isAdmin(chatId)){
+          sendMessage(chatId, "⛔ Admin only.");
+          return;
+        }
+
+        const id = data
+          .replace("PETTY_DELETE_CONFIRM:", "")
+          .trim();
+
+        // Remove buttons first so the user cannot press again
+        removePettyDeleteButtons(callback);
+
+        deletePettyCashById(chatId, id);
+
+        return;
+      }
+
+      // ==============================
+      // Petty Cash Delete - Cancel
+      // ==============================
+      if(data.indexOf("PETTY_DELETE_CANCEL:") === 0){
+
+        const chatId = callback.message.chat.id;
+
+        // Remove buttons
+        removePettyDeleteButtons(callback);
+
+        sendMessage(
+          chatId,
+          "❌ Delete cancelled."
+        );
+
+        return;
+      }
+
+      // Unknown callback
+      return;
+    }
+
+    const chatId = update.message.chat.id;
+
+    // ==============================
+    // Access Control
+    // ==============================
+    if(!isUserAllowed(chatId)){
+
+      sendMessage(chatId,
+        "⛔ Access denied\n\n" +
+        "You are not allowed to use this bot.\n\n" +
+        "Your Chat ID: " + chatId
+      );
+
+      return;
+    }
+
+
+    // ==============================
+    // Handle Photo / Slip Image First
+    // ==============================
+    if(update.message.photo){
+
+      handleUploadedPhoto(chatId, update.message.photo);
+
+      return;
+    }
+
+
+    // ==============================
+    // Reject Non-Text Message
+    // ==============================
+    if(!update.message.text){
+
+      sendMessage(
+        chatId,
+        "❌ មិនស្គាល់ ❌\n\n" +
+        "សូមផ្ញើ រូបប្រតិបត្តិការ (Slip) ធនាគារ ដែលត្រឹមត្រូវ"
+      );
+
+      return;
+    }
+
+
+    const text = update.message.text.trim();
+    const state = getState(chatId);
+
+
+    // ==============================
+    // Command Buttons
+    // ==============================
+    if(COMMANDS.includes(text)){
+
+      // Keep state only during Missing Petty Cash workflow
+      if(
+        state === "petty_missing_type" &&
+        (
+          text === BTN_MISSING_CASH_IN ||
+          text === BTN_MISSING_EXPENSE
+        )
+      ){
+        handleCommand(chatId, text);
+        return;
+      }
+
+      clearState(chatId);
+      handleCommand(chatId, text);
+      return;
+    }
+
+
+    // ==============================
+    // 1. Normal Report/Search States
+    // ==============================
+    if(state == "customer"){
+      clearState(chatId);
+      sendCustomer(chatId, text);
+      return;
+    }
+
+    if(state == "trx"){
+      clearState(chatId);
+      sendTransaction(chatId, text);
+      return;
+    }
+
+    if(state == "date"){
+      clearState(chatId);
+      sendDate(chatId, text);
+      return;
+    }
+
+    if(state == "daterange"){
+      clearState(chatId);
+      sendDateRange(chatId, text);
+      return;
+    }
+
+    if(state == "merchant"){
+      clearState(chatId);
+      sendMerchant(chatId, text);
+      return;
+    }
+
+    if(state == "customer_analytics"){
+      clearState(chatId);
+      sendCustomerAnalytics(chatId, text);
+      return;
+    }
+
+    if(state == "merchant_analytics"){
+      clearState(chatId);
+      sendMerchantAnalytics(chatId, text);
+      return;
+    }
+
+
+    // ==============================
+    // 2. Normal Petty Cash Input
+    // ==============================
+    if(state === "petty_cash_in"){
+      savePettyCash(chatId, text, "IN", "NORMAL");
+      return;
+    }
+
+    if(state === "petty_expense"){
+      savePettyCash(chatId, text, "OUT", "NORMAL");
+      return;
+    }
+
+
+    // ==============================
+    // 3. Missing Petty Cash Admin Check
+    // ==============================
+    if(String(state).indexOf("petty_missing") === 0){
+
+      if(!isAdmin(chatId)){
+        clearState(chatId);
+        sendMessage(chatId, "⛔ Admin only.\n\nYou cannot add missing petty cash.");
+        return;
+      }
+
+    }
+
+
+    if(state === "petty_missing_type"){
+
+      if(text === BTN_CASH_IN || text === BTN_MISSING_CASH_IN){
+
+        setState(chatId, "petty_missing_date_in");
+
+        sendMessage(chatId,
+          "📅 សូមបញ្ចូល ថ្ងៃដែលភ្លេចដាក់លុយចូល\n\n" +
+          "ឧទាហរណ៍:\n" +
+          "7/15/2027"
+        );
+
+        return;
+      }
+
+      if(text === BTN_EXPENSE || text === BTN_MISSING_EXPENSE){
+
+        setState(chatId, "petty_missing_date_out");
+
+        sendMessage(chatId,
+          "📅 សូមបញ្ចូល ថ្ងៃដែលភ្លេចដាក់ចំណាយចូល\n\n" +
+          "ឧទាហរណ៍:\n" +
+          "7/15/2027"
+        );
+
+        return;
+      }
+
+      sendMessage(chatId, "Please choose 💰 Cash In or 💸 Expense");
+      return;
+    }
+
+
+    if(state === "petty_missing_date_in"){
+
+      const date = parsePettyDateInput(text);
+
+      if(!date){
+        sendMessage(chatId,
+          "❌ សរសេរមិនត្រឹមត្រូវ\n\n" +
+          "Please enter date like:\n" +
+          "7/15/2027"
+        );
+        return;
+      }
+
+      setTempData(chatId, "petty_missing_date", text);
+      setState(chatId, "petty_missing_input_in");
+
+      sendMessage(chatId,
+        "💰 សូមបញ្ចូល ចំនួនទឹកប្រាក់(គឹតជា$) ជាមួយនិង កំណត់ត្រា(ប្រសិនបើមាន)\n\n" +
+        "Example:\n" +
+        "Deposit 100\n" +
+        "1000 រើសបាន\n" +
+        "10.88 បានពីភ្ញៀវ\n" +
+        "10.01"
+      );
+
+      return;
+    }
+
+
+    if(state === "petty_missing_date_out"){
+
+      const date = parsePettyDateInput(text);
+
+      if(!date){
+        sendMessage(chatId,
+          "❌ សរសេរមិនត្រឹមត្រូវ\n\n" +
+          "Please enter date like:\n" +
+          "7/15/2027"
+        );
+        return;
+      }
+
+      setTempData(chatId, "petty_missing_date", text);
+      setState(chatId, "petty_missing_input_out");
+
+      sendMessage(chatId,
+        "💸 សូមបញ្ចូល ចំណាយ(គឹតជា$) ជាមួយនិង កំណត់ត្រា(ប្រសិនបើមាន)\n\n" +
+        "ឧទាហរណ៍:\n" +
+        "ទិញបាយ 55\n" +
+        "10.5 ដើរលេង ជ្រុះបាត់\n" +
+        "12.5"
+      );
+
+      return;
+    }
+
+
+    if(state === "petty_missing_input_in"){
+
+      const dateText = getTempData(chatId, "petty_missing_date");
+
+      savePettyCash(chatId, text, "IN", "MISSING", dateText);
+
+      clearTempData(chatId, "petty_missing_date");
+
+      return;
+    }
+
+
+    if(state === "petty_missing_input_out"){
+
+      const dateText = getTempData(chatId, "petty_missing_date");
+
+      savePettyCash(chatId, text, "OUT", "MISSING", dateText);
+
+      clearTempData(chatId, "petty_missing_date");
+
+      return;
+    }
+
+
+    // ==============================
+    // 4. Petty Cash Summary Date/Range
+    // ==============================
+    if(state === "petty_summary_date"){
+
+      sendPettyDateSummary(chatId, text);
+
+      clearState(chatId);
+
+      return;
+    }
+
+
+    if(state === "petty_summary_daterange"){
+
+      sendPettyDateRangeSummary(chatId, text);
+
+      clearState(chatId);
+
+      return;
+    }
+
+
+    // ==============================
+    // 5. Petty Cash Delete/Edit
+    // ==============================
+    if(state === "petty_delete_id"){
+
+      if(!isAdmin(chatId)){
+        clearState(chatId);
+        sendMessage(chatId, "⛔ Admin only.");
+        return;
+      }
+
+      requestDeletePettyCash(chatId, text);
+
+      clearState(chatId);
+
+      return;
+    }
+
+
+    if(state === "petty_edit_id"){
+
+      if(!isAdmin(chatId)){
+        clearState(chatId);
+        sendMessage(chatId, "⛔ Admin only.");
+        return;
+      }
+
+      const rowNumber = findPettyRowById(text);
+
+      if(!rowNumber){
+        sendMessage(chatId,
+          "❌ Petty Cash ID not found\n\n" +
+          "ឧទាហរណ៍:\n" +
+          "PC000001"
+        );
+        return;
+      }
+
+      setTempData(chatId, "petty_edit_id", text.trim().toUpperCase());
+      setState(chatId, "petty_edit_input");
+
+      sendMessage(chatId,
+        "✏️ សូមបញ្ចូល ចំនួនទឹកប្រាក់ថ្មី (គឹតជា$) ជាមួយនិង កំណត់ត្រា(ប្រសិនបើមាន)\n\n" +
+        "ឧទាហរណ៍:\n" +
+        "Deposit 100\n" +
+        "10.88 បានពីភ្ញៀវ\n" +
+        "1000 រើសបាន.\n" +
+        "10.5"
+      );
+
+      return;
+    }
+
+
+    if(state === "petty_edit_input"){
+
+      if(!isAdmin(chatId)){
+        clearState(chatId);
+        sendMessage(chatId, "⛔ Admin only.");
+        return;
+      }
+
+      const id = getTempData(chatId, "petty_edit_id");
+
+      editPettyCashById(chatId, id, text);
+
+      clearTempData(chatId, "petty_edit_id");
+      clearState(chatId);
+
+      return;
+    }
+
+
+    // ==============================
+    // 6. Manual Missing Bank Transaction
+    // ==============================
+    if(state === "missing_trx_datetime"){
+
+      if(!isAdmin(chatId)){
+        clearState(chatId);
+        sendMessage(chatId, "⛔ Admin only.");
+        return;
+      }
+
+      const parsed = parseMissingTransactionDateTime(text);
+
+      if(!parsed){
+        sendMessage(chatId,
+          "❌ Invalid date/time\n\n" +
+          "ឧទាហរណ៍:\n" +
+          "7/15/2026 10:30 AM\n" +
+          "2026-07-15 15:42"
+        );
+        return;
+      }
+
+      setTempData(chatId, "missing_trx_date", parsed.dateText);
+      setTempData(chatId, "missing_trx_time", parsed.timeText);
+
+      setState(chatId, "missing_trx_name");
+
+      sendMessage(chatId,
+        "👤 សូមបញ្ចូលឈ្មោះអតិថិជន ឈ្មោះពេញកាន់តែល្អ\n\n" +
+        "ឧទាហរណ៍:\n" +
+        
+        "CHHAY\n" +
+
+        "CHINCHHAY\n" +
+
+        "KHEAV CHINCHHAY (*999)"
+      );
+
+      return;
+    }
+
+
+    if(state === "missing_trx_name"){
+
+      if(!text){
+        sendMessage(chatId, "❌ Please enter customer name.");
+        return;
+      }
+
+      setTempData(chatId, "missing_trx_name", text);
+
+      setState(chatId, "missing_trx_amount_currency");
+
+      sendMessage(chatId,
+        "💵 Please enter amount and currency\n\n" +
+        "ឧទាហរណ៍:\n" +
+        "$10.50\n" +
+        "10.50 USD\n" +
+        "៛4000\n" +
+        "4000 KHR"
+      );
+
+      return;
+    }
+
+
+    if(state === "missing_trx_amount_currency"){
+
+      const parsed = parseMissingAmountCurrency(text);
+
+      if(!parsed){
+        sendMessage(chatId,
+          "❌ មិនស្គាល់ សូមមើលលំនាំខាងក្រោម\n\n" +
+          "ឧទាហរណ៍:\n" +
+          "$10.50\n" +
+          "10.50 USD\n" +
+          "៛4000\n" +
+          "4000 KHR"
+        );
+        return;
+      }
+
+      setTempData(chatId, "missing_trx_amount", parsed.amount);
+      setTempData(chatId, "missing_trx_currency", parsed.currency);
+
+      setState(chatId, "missing_trx_merchant");
+
+      sendMissingTransactionMerchantMenu(chatId);
+
+      return;
+    }
+
+
+    if(state === "missing_trx_merchant"){
+
+      if(text === BTN_DEFAULT_MERCHANT){
+
+        setTempData(chatId, "missing_trx_merchant", "PHTEAS DECOR");
+        setState(chatId, "missing_trx_id");
+
+        sendMessage(chatId,
+          "🔢 សូមបញ្ចូលលេខ Trx ID\n\n" +
+          "ឧទាហរណ៍:\n" +
+          "178315848252879"
+        );
+
+        return;
+      }
+
+      if(text === BTN_OTHER_MERCHANT){
+
+        setState(chatId, "missing_trx_merchant_input");
+
+        sendMessage(chatId,
+          "🏪 Please enter merchant name\n\n" +
+          "ឧទាហរណ៍:\n" +
+          "PHTEAS DECOR"
+        );
+
+        return;
+      }
+
+      sendMessage(chatId, "Please choose merchant.");
+      return;
+    }
+
+
+    if(state === "missing_trx_merchant_input"){
+
+      if(!text){
+        sendMessage(chatId, "❌ Please enter merchant name.");
+        return;
+      }
+
+      setTempData(chatId, "missing_trx_merchant", text);
+
+      setState(chatId, "missing_trx_id");
+
+      sendMessage(chatId,
+        "🔢 សូមបញ្ចូលលេខ Trx ID\n\n" +
+        "ឧទាហរណ៍:\n" +
+        "178315848252879"
+      );
+
+      return;
+    }
+
+
+    if(state === "missing_trx_id"){
+
+      if(!text){
+        sendMessage(chatId, "❌ សូមបញ្ចូលលេខ Trx ID.");
+        return;
+      }
+
+      saveMissingTransaction(chatId, text);
+
+      clearState(chatId);
+
+      return;
+    }
+
+    if(state === "missing_trx_show_range"){
+
+      sendMissingTransactionRange(chatId, text, 1);
+
+      clearState(chatId);
+
+      return;
+    }
+
+    // ==============================
+    // 7. LAST: Normal ABA Transaction Saving
+    // ==============================
+
+    if(state === "slip_edit_input"){
+
+      updateSlipTempDataFromText(chatId, text);
+
+      clearState(chatId);
+
+      return;
+    }
+
+    if(state === "expense_slip_edit_input"){
+
+      updateExpenseSlipTempDataFromText(chatId, text);
+
+      clearState(chatId);
+
+      return;
+    }
+
+    if(state === "delete_trx_id"){
+
+      if(!isAdmin(chatId)){
+        clearState(chatId);
+        sendMessage(chatId, "⛔ Admin only.");
+        return;
+      }
+
+      previewDeleteTransaction(chatId, text);
+
+      return;
+    }
+
+
+    const result = saveTransaction(text);
+
+    if(result.success){
+
+      // Dashboard refresh disabled for faster saving
+      // Dashboard will refresh by daily trigger instead
+      // try{
+      //   refreshDashboard();
+      // }catch(err){
+      //   Logger.log("Dashboard refresh failed: " + err);
+      // }
+
+      sendMessage(chatId, result.message);
+
+    }else{
+
+      if(result.message == "❌ មិនទាន់មានលេខប្រតិបត្តិការនេះទេ"){
+        sendMessage(chatId, MSG_INVALID_INPUT);
+      }else{
+        sendMessage(chatId, result.message);
+      }
+
+    }
+
+  }catch(err){
+
+    Logger.log(err);
+
+    try{
+
+      const update = JSON.parse(e.postData.contents);
+      const chatId = update.message.chat.id;
+
+      sendMessage(
+        chatId,
+        "❌ Script Error\n\n" + err.message
+      );
+
+    }catch(ignore){}
+
+  }
+}

@@ -1,0 +1,103 @@
+function getOrCreateExportFolder(){
+
+  const folderName = "ABA Reports";
+  const folders = DriveApp.getFoldersByName(folderName);
+
+  if(folders.hasNext()){
+    return folders.next();
+  }
+
+  return DriveApp.createFolder(folderName);
+}
+
+
+function exportCSV(mode){
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(SHEET_NAME);
+
+  const values = sheet.getDataRange().getDisplayValues();
+
+  if(values.length <= 1){
+    return null;
+  }
+
+  const header = values[0];
+  const rows = [];
+
+  const today = new Date();
+  today.setHours(0,0,0,0);
+
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  monthStart.setHours(0,0,0,0);
+
+  for(let i=1;i<values.length;i++){
+
+    const row = values[i];
+
+    const rowDate = new Date(
+      sheet.getRange(i+1, COL_DATE+1).getValue()
+    );
+
+    rowDate.setHours(0,0,0,0);
+
+    if(mode == "today" && rowDate.getTime() !== today.getTime()){
+      continue;
+    }
+
+    if(mode == "month" && rowDate < monthStart){
+      continue;
+    }
+
+    rows.push(row);
+  }
+
+  if(rows.length == 0){
+    return null;
+  }
+
+  const csvData = [header].concat(rows).map(function(row){
+    return row.map(function(cell){
+      cell = String(cell).replace(/"/g, '""');
+      return '"' + cell + '"';
+    }).join(",");
+  }).join("\n");
+
+  const folder = getOrCreateExportFolder();
+
+  const fileName =
+    "ABA_Report_" +
+    mode +
+    "_" +
+    Utilities.formatDate(new Date(), TIME_ZONE, "yyyyMMdd_HHmmss") +
+    ".csv";
+
+  const file = folder.createFile(fileName, csvData, MimeType.CSV);
+
+  return file.getUrl();
+}
+
+
+function sendExportCSV(chatId, mode){
+
+  const url = exportCSV(mode);
+
+  if(!url){
+    sendMessage(chatId, "❌ No data to export.");
+    return;
+  }
+
+  let title = "📤 Export CSV";
+
+  if(mode == "today") title = "📤 Today CSV Export";
+  if(mode == "month") title = "📤 This Month CSV Export";
+  if(mode == "all") title = "📤 All Transactions CSV Export";
+
+  sendMessage(
+    chatId,
+    title +
+    "\n\n✅ File created successfully." +
+    "\n\n📁 Saved in Google Drive folder: ABA Reports" +
+    "\n\n🔗 File link:\n" + url
+  );
+}

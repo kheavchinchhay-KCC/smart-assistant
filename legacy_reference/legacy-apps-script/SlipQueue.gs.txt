@@ -1,0 +1,1208 @@
+// ======================================================
+// SlipQueue.gs
+// Batch slip support with inline Save-as-Expense / Save-as-Sale / Retry / Cancel
+// ======================================================
+
+const SQ = {
+  ID: 1,
+  DATE: 2,
+  TIME: 3,
+  CHAT_ID: 4,
+  FILE_ID: 5,
+  TYPE: 6,
+  STATUS: 7,
+  MESSAGE_ID: 8,
+  TRX_ID: 9,
+  ORIGINAL_AMOUNT: 10,
+  CURRENCY: 11,
+  USD_AMOUNT: 12,
+  HOLDER: 13,
+  MERCHANT: 14,
+  REMARK: 15,
+  RAW_JSON: 16,
+  ERROR: 17
+};
+
+
+function getSlipQueueSheet(){
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(SLIP_QUEUE_SHEET_NAME);
+
+  if(!sheet){
+
+    sheet = ss.insertSheet(SLIP_QUEUE_SHEET_NAME);
+
+    sheet.appendRow([
+      "ID",
+      "Date",
+      "Time",
+      "Chat ID",
+      "File ID",
+      "Type",
+      "Status",
+      "Message ID",
+      "Trx ID",
+      "Original Amount",
+      "Currency",
+      "USD Amount",
+      "Holder",
+      "Merchant",
+      "Remark",
+      "Raw JSON",
+      "Error"
+    ]);
+  }
+
+  return sheet;
+}
+
+
+function generateSlipQueueId(){
+
+  const ts = Utilities.formatDate(new Date(), TIME_ZONE, "yyyyMMddHHmmssSSS");
+  const rnd = Math.floor(Math.random() * 900) + 100;
+
+  return "SLIP" + ts + rnd;
+}
+
+
+function createSlipQueueRecord(chatId, fileId){
+
+  const sheet = getSlipQueueSheet();
+  const id = generateSlipQueueId();
+  const now = new Date();
+
+  sheet.appendRow([
+    id,
+    Utilities.formatDate(now, TIME_ZONE, "M/d/yyyy"),
+    Utilities.formatDate(now, TIME_ZONE, "HH:mm:ss"),
+    chatId,
+    fileId,
+    "",
+    "READING",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ]);
+
+  return id;
+}
+
+
+function findSlipQueueRowById(slipId){
+
+  const sheet = getSlipQueueSheet();
+  const data = sheet.getDataRange().getValues();
+
+  slipId = String(slipId || "").trim();
+
+  for(let i = 1; i < data.length; i++){
+
+    if(String(data[i][SQ.ID - 1]).trim() === slipId){
+      return i + 1;
+    }
+  }
+
+  return null;
+}
+
+
+function getSlipQueueRecord(slipId){
+
+  const sheet = getSlipQueueSheet();
+  const rowNumber = findSlipQueueRowById(slipId);
+
+  if(!rowNumber){
+    return null;
+  }
+
+  const row = sheet.getRange(rowNumber, 1, 1, 17).getValues()[0];
+
+  return {
+    rowNumber: rowNumber,
+    id: row[SQ.ID - 1],
+    date: row[SQ.DATE - 1],
+    time: row[SQ.TIME - 1],
+    chatId: row[SQ.CHAT_ID - 1],
+    fileId: row[SQ.FILE_ID - 1],
+    type: row[SQ.TYPE - 1],
+    status: row[SQ.STATUS - 1],
+    messageId: row[SQ.MESSAGE_ID - 1],
+    trxId: row[SQ.TRX_ID - 1],
+    originalAmount: Number(row[SQ.ORIGINAL_AMOUNT - 1]) || 0,
+    currency: row[SQ.CURRENCY - 1],
+    usdAmount: Number(row[SQ.USD_AMOUNT - 1]) || 0,
+    holder: row[SQ.HOLDER - 1],
+    merchant: row[SQ.MERCHANT - 1],
+    remark: row[SQ.REMARK - 1],
+    rawJson: row[SQ.RAW_JSON - 1],
+    error: row[SQ.ERROR - 1]
+  };
+}
+
+
+function updateSlipQueueRecord(slipId, fields){
+
+  const sheet = getSlipQueueSheet();
+  const rowNumber = findSlipQueueRowById(slipId);
+
+  if(!rowNumber){
+    return;
+  }
+
+  if(fields.type !== undefined){
+    sheet.getRange(rowNumber, SQ.TYPE).setValue(fields.type);
+  }
+
+  if(fields.status !== undefined){
+    sheet.getRange(rowNumber, SQ.STATUS).setValue(fields.status);
+  }
+
+  if(fields.messageId !== undefined){
+    sheet.getRange(rowNumber, SQ.MESSAGE_ID).setValue(fields.messageId);
+  }
+
+  if(fields.trxId !== undefined){
+    sheet.getRange(rowNumber, SQ.TRX_ID).setValue(fields.trxId);
+  }
+
+  if(fields.originalAmount !== undefined){
+    sheet.getRange(rowNumber, SQ.ORIGINAL_AMOUNT).setValue(fields.originalAmount);
+  }
+
+  if(fields.currency !== undefined){
+    sheet.getRange(rowNumber, SQ.CURRENCY).setValue(fields.currency);
+  }
+
+  if(fields.usdAmount !== undefined){
+    sheet.getRange(rowNumber, SQ.USD_AMOUNT).setValue(fields.usdAmount);
+  }
+
+  if(fields.holder !== undefined){
+    sheet.getRange(rowNumber, SQ.HOLDER).setValue(fields.holder);
+  }
+
+  if(fields.merchant !== undefined){
+    sheet.getRange(rowNumber, SQ.MERCHANT).setValue(fields.merchant);
+  }
+
+  if(fields.remark !== undefined){
+    sheet.getRange(rowNumber, SQ.REMARK).setValue(fields.remark);
+  }
+
+  if(fields.rawJson !== undefined){
+    sheet.getRange(rowNumber, SQ.RAW_JSON).setValue(fields.rawJson);
+  }
+
+  if(fields.error !== undefined){
+    sheet.getRange(rowNumber, SQ.ERROR).setValue(fields.error);
+  }
+}
+
+
+// ======================================================
+// Main upload handler for queue
+// ======================================================
+
+function handleUploadedPhotoQueue(chatId, photos){
+
+  if(!isAdmin(chatId)){
+    sendMessage(chatId, "⛔ Admin only.\n\nYou cannot add transactions from slip images.");
+    return;
+  }
+
+  const photo = photos[photos.length - 1];
+  const fileId = photo.file_id;
+
+  const slipId = createSlipQueueRecord(chatId, fileId);
+
+  const loadingMsg =
+    "📷 Slip received\n\n" +
+    "ID: " + slipId + "\n" +
+    "Status: Reading slip...";
+
+  const messageId = slipQueueSendInlineMessage(chatId, loadingMsg, []);
+  updateSlipQueueRecord(slipId, {messageId: messageId});
+
+  readSlipQueueItem(chatId, slipId);
+
+  const record = getSlipQueueRecord(slipId);
+  const preview = buildSlipQueueMessage(record);
+  const keyboard = buildSlipQueueKeyboard(record);
+
+  slipQueueEditInlineMessage(chatId, messageId, preview, keyboard);
+}
+
+
+function readSlipQueueItem(chatId, slipId){
+
+  const record = getSlipQueueRecord(slipId);
+
+  if(!record){
+    return;
+  }
+
+  updateSlipQueueRecord(slipId, {
+    status: "READING",
+    error: ""
+  });
+
+  try{
+
+    const imageBlob = downloadTelegramFile(record.fileId);
+    const result = readSlipWithGemini(imageBlob);
+
+    if(!result || result.isBankSlip !== true){
+
+      updateSlipQueueRecord(slipId, {
+        type: "UNKNOWN",
+        status: "FAILED",
+        error: "This image does not look like a bank/payment slip.",
+        rawJson: JSON.stringify(result || {})
+      });
+
+      return;
+    }
+
+    const slipType = getSlipType(result);
+    const amount = Number(result.amount) || 0;
+    const currency = normalizeCurrency(result.currency || "USD");
+    const amountUSD = convertExpenseAmountToUSD(amount, currency);
+    const trxId = String(result.trxId || "").trim();
+
+    if(!slipType){
+
+      updateSlipQueueRecord(slipId, {
+        type: "UNKNOWN",
+        status: "FAILED",
+        error: "Slip type is unclear.",
+        rawJson: JSON.stringify(result)
+      });
+
+      return;
+    }
+
+    if(slipType === "SALE_TRANSACTION"){
+
+      if(!trxId){
+
+        updateSlipQueueRecord(slipId, {
+          type: slipType,
+          status: "READY",
+          trxId: "",
+          originalAmount: amount,
+          currency: currency,
+          usdAmount: amount,
+          holder: result.name || result.expenseHolder || "-",
+          merchant: result.merchant || "PHTEAS DECOR",
+          remark: result.remark || "-",
+          rawJson: JSON.stringify(result),
+          error: "Sale Trx ID was not found. Save as Expense is still available."
+        });
+
+        return;
+      }
+
+      if(slipTransactionExistsAnywhere(trxId)){
+
+        updateSlipQueueRecord(slipId, {
+          type: slipType,
+          status: "DUPLICATE",
+          trxId: trxId,
+          originalAmount: amount,
+          currency: currency,
+          usdAmount: amount,
+          holder: result.name || "-",
+          merchant: result.merchant || "PHTEAS DECOR",
+          remark: result.remark || "-",
+          rawJson: JSON.stringify(result),
+          error: "Duplicate transaction ID already exists."
+        });
+
+        return;
+      }
+
+      updateSlipQueueRecord(slipId, {
+        type: slipType,
+        status: "READY",
+        trxId: trxId,
+        originalAmount: amount,
+        currency: currency,
+        usdAmount: amount,
+        holder: result.name || "-",
+        merchant: result.merchant || "PHTEAS DECOR",
+        remark: result.remark || "-",
+        rawJson: JSON.stringify(result),
+        error: ""
+      });
+
+      return;
+    }
+
+    if(slipType === "EXPENSE"){
+
+      if(!amount){
+
+        updateSlipQueueRecord(slipId, {
+          type: slipType,
+          status: "FAILED",
+          error: "Expense slip detected, but amount was not found.",
+          rawJson: JSON.stringify(result)
+        });
+
+        return;
+      }
+
+      if(trxId && slipTransactionExistsAnywhere(trxId)){
+
+        updateSlipQueueRecord(slipId, {
+          type: slipType,
+          status: "DUPLICATE",
+          trxId: trxId,
+          originalAmount: amount,
+          currency: currency,
+          usdAmount: amountUSD,
+          holder: normalizeExpenseHolder(result.expenseHolder || result.name || "-"),
+          merchant: result.merchant || "-",
+          remark: result.remark || "-",
+          rawJson: JSON.stringify(result),
+          error: "Duplicate transaction/reference ID already exists."
+        });
+
+        return;
+      }
+
+      updateSlipQueueRecord(slipId, {
+        type: slipType,
+        status: "READY",
+        trxId: trxId,
+        originalAmount: amount,
+        currency: currency,
+        usdAmount: amountUSD,
+        holder: normalizeExpenseHolder(result.expenseHolder || result.name || "-"),
+        merchant: result.merchant || "-",
+        remark: result.remark || "-",
+        rawJson: JSON.stringify(result),
+        error: ""
+      });
+
+      return;
+    }
+
+  }catch(err){
+
+    updateSlipQueueRecord(slipId, {
+      type: "UNKNOWN",
+      status: "FAILED",
+      error: err.message
+    });
+  }
+}
+
+
+// ======================================================
+// Inline message UI
+// ======================================================
+
+function buildSlipQueueMessage(record){
+
+  if(!record){
+    return "❌ Slip record not found.";
+  }
+
+  let msg =
+    "📷 Slip Queue\n\n" +
+    "ID: " + record.id + "\n" +
+    "Status: " + record.status + "\n";
+
+  if(record.status === "READING"){
+    msg += "\nReading slip, please wait...";
+    return msg;
+  }
+
+  if(record.status === "FAILED"){
+
+    msg +=
+      "\n❌ Cannot read this slip\n\n" +
+      "Reason: " + (record.error || "-") + "\n\n" +
+      "You can click 🔁 Retry or ❌ Cancel.";
+
+    return msg;
+  }
+
+  if(record.status === "DUPLICATE"){
+
+    msg +=
+      "\n⚠️ Duplicate slip\n\n" +
+      "Reason: " + (record.error || "-") + "\n" +
+      "Trx/Ref ID: " + (record.trxId || "-") + "\n\n" +
+      "You can click 🔁 Retry if OCR read wrong, or ❌ Cancel.";
+
+    return msg;
+  }
+
+  if(record.type === "SALE_TRANSACTION" || record.type === "EXPENSE"){
+
+    let data = {};
+
+    try{
+      data = JSON.parse(record.rawJson || "{}");
+    }catch(err){
+      data = {};
+    }
+
+    const detectedLabel =
+      record.type === "SALE_TRANSACTION"
+        ? "🛒 Sale"
+        : "💸 Expense";
+
+    msg +=
+      "\n🔎 Gemini detected: " + detectedLabel + "\n\n" +
+      "Date: " + (data.transactionDate || "-") + "\n" +
+      "Time: " + (data.transactionTime || "-") + "\n";
+
+    if(record.type === "EXPENSE"){
+      msg +=
+        "Holder: " + (record.holder || data.expenseHolder || data.name || "-") + "\n" +
+        "Seller: " + (record.merchant || data.merchant || "-") + "\n";
+    }else{
+      msg +=
+        "Name: " + (data.name || data.expenseHolder || record.holder || "-") + "\n" +
+        "Merchant: " + (record.merchant || data.merchant || "PHTEAS DECOR") + "\n";
+    }
+
+    msg +=
+      "Original Amount: " +
+      (
+        record.type === "EXPENSE"
+          ? formatExpenseOriginalAmount(record.originalAmount, record.currency)
+          : (record.currency || "USD") + " " + formatNumber(record.originalAmount, 2)
+      ) +
+      "\n" +
+      "USD Amount: $" + formatNumber(record.usdAmount, 2) + "\n" +
+      "Remark: " + (record.remark || data.remark || "-") + "\n" +
+      "Reference/Trx ID: " + (record.trxId || "-");
+
+    if(record.error){
+      msg += "\n\n⚠️ " + record.error;
+    }
+
+    msg += "\n\nChoose how to save this slip:";
+
+    return msg;
+  }
+
+  if(record.status === "SAVED"){
+
+    msg += "\n✅ Saved successfully.";
+    return msg;
+  }
+
+  if(record.status === "CANCELLED"){
+
+    msg += "\n❌ Cancelled.";
+    return msg;
+  }
+
+  return msg;
+}
+
+
+function buildSlipQueueKeyboard(record){
+
+  if(!record){
+    return [];
+  }
+
+  if(record.status === "READY"){
+
+    return [
+      [
+        {
+          text: "💸 Save as Expense",
+          callback_data: "SLIPQ_SAVE_EXPENSE_" + record.id
+        }
+      ],
+      [
+        {
+          text: "🛒 Save as Sale",
+          callback_data: "SLIPQ_SAVE_SALE_" + record.id
+        }
+      ],
+      [
+        {
+          text: "🔁 Retry",
+          callback_data: "SLIPQ_RETRY_" + record.id
+        },
+        {
+          text: "❌ Cancel",
+          callback_data: "SLIPQ_CANCEL_" + record.id
+        }
+      ]
+    ];
+  }
+
+  if(record.status === "FAILED" || record.status === "DUPLICATE"){
+
+    return [
+      [
+        {
+          text: "🔁 Retry",
+          callback_data: "SLIPQ_RETRY_" + record.id
+        },
+        {
+          text: "❌ Cancel",
+          callback_data: "SLIPQ_CANCEL_" + record.id
+        }
+      ]
+    ];
+  }
+
+  return [];
+}
+
+
+// ======================================================
+// Callback handler
+// ======================================================
+
+function handleSlipQueueCallback(callbackQuery){
+
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+  const data = String(callbackQuery.data || "");
+
+  slipQueueAnswerCallback(callbackQuery.id);
+
+  if(data.indexOf("SLIPQ_") !== 0){
+    return;
+  }
+
+  if(!isAdmin(chatId)){
+    slipQueueEditInlineMessage(
+      chatId,
+      messageId,
+      "⛔ Admin only.",
+      []
+    );
+    return;
+  }
+
+  const parts = data.split("_");
+  const action = parts[1];
+
+  // New buttons:
+  // SLIPQ_SAVE_EXPENSE_<slipId>
+  // SLIPQ_SAVE_SALE_<slipId>
+  if(action === "SAVE" && (parts[2] === "EXPENSE" || parts[2] === "SALE")){
+
+    const saveType = parts[2];
+    const slipId = parts.slice(3).join("_");
+
+    saveQueuedSlipAs(chatId, slipId, messageId, saveType);
+    return;
+  }
+
+  // Old button compatibility:
+  // SLIPQ_SAVE_<slipId>
+  if(action === "SAVE"){
+
+    const slipId = parts.slice(2).join("_");
+
+    saveQueuedSlip(chatId, slipId, messageId);
+    return;
+  }
+
+  const slipId = parts.slice(2).join("_");
+  const record = getSlipQueueRecord(slipId);
+
+  if(!record){
+
+    slipQueueEditInlineMessage(
+      chatId,
+      messageId,
+      "❌ Slip record not found.",
+      []
+    );
+    return;
+  }
+
+  if(action === "RETRY"){
+
+    if(record.status === "SAVED" || record.status === "CANCELLED"){
+      slipQueueEditInlineMessage(
+        chatId,
+        messageId,
+        "⚠️ This slip is already " + record.status.toLowerCase() + ".",
+        []
+      );
+      return;
+    }
+
+    updateSlipQueueRecord(slipId, {
+      status: "READING",
+      error: ""
+    });
+
+    slipQueueEditInlineMessage(
+      chatId,
+      messageId,
+      "📷 Slip Queue\n\nID: " + slipId + "\nStatus: READING\n\nRetry reading slip, please wait...",
+      []
+    );
+
+    readSlipQueueItem(chatId, slipId);
+
+    const newRecord = getSlipQueueRecord(slipId);
+
+    slipQueueEditInlineMessage(
+      chatId,
+      messageId,
+      buildSlipQueueMessage(newRecord),
+      buildSlipQueueKeyboard(newRecord)
+    );
+
+    return;
+  }
+
+  if(action === "CANCEL"){
+
+    if(record.status === "SAVED" || record.status === "CANCELLED"){
+      slipQueueEditInlineMessage(
+        chatId,
+        messageId,
+        buildSlipQueueMessage(record),
+        []
+      );
+      return;
+    }
+
+    updateSlipQueueRecord(slipId, {
+      status: "CANCELLED"
+    });
+
+    const newRecord = getSlipQueueRecord(slipId);
+
+    slipQueueEditInlineMessage(
+      chatId,
+      messageId,
+      buildSlipQueueMessage(newRecord),
+      []
+    );
+
+    return;
+  }
+}
+
+
+
+// ======================================================
+// Save queued slip
+// ======================================================
+
+function saveQueuedSlip(chatId, slipId, messageId){
+
+  const record = getSlipQueueRecord(slipId);
+
+  if(!record){
+
+    slipQueueEditInlineMessage(chatId, messageId, "❌ Slip record not found.", []);
+    return;
+  }
+
+  if(record.status !== "READY"){
+
+    slipQueueEditInlineMessage(
+      chatId,
+      messageId,
+      "⚠️ This slip is not ready to save.\n\nStatus: " + record.status,
+      buildSlipQueueKeyboard(record)
+    );
+
+    return;
+  }
+
+  // Backward compatibility:
+  // old Save button follows Gemini's detected type.
+  if(record.type === "SALE_TRANSACTION"){
+    saveQueuedSlipAs(chatId, slipId, messageId, "SALE");
+    return;
+  }
+
+  if(record.type === "EXPENSE"){
+    saveQueuedSlipAs(chatId, slipId, messageId, "EXPENSE");
+    return;
+  }
+
+  slipQueueEditInlineMessage(
+    chatId,
+    messageId,
+    "❌ Unknown slip type.",
+    []
+  );
+}
+
+
+function saveQueuedSlipAs(chatId, slipId, messageId, saveType){
+
+  const record = getSlipQueueRecord(slipId);
+
+  if(!record){
+
+    slipQueueEditInlineMessage(chatId, messageId, "❌ Slip record not found.", []);
+    return;
+  }
+
+  if(record.status !== "READY"){
+
+    slipQueueEditInlineMessage(
+      chatId,
+      messageId,
+      "⚠️ This slip is not ready to save.\n\nStatus: " + record.status,
+      buildSlipQueueKeyboard(record)
+    );
+
+    return;
+  }
+
+  saveType = String(saveType || "").toUpperCase();
+
+  if(saveType !== "SALE" && saveType !== "EXPENSE"){
+
+    slipQueueEditInlineMessage(
+      chatId,
+      messageId,
+      "❌ Invalid save type.",
+      []
+    );
+    return;
+  }
+
+  let data = {};
+
+  try{
+    data = JSON.parse(record.rawJson || "{}");
+  }catch(err){
+    updateSlipQueueRecord(slipId, {
+      status: "FAILED",
+      error: "Stored OCR data is invalid."
+    });
+
+    const badRecord = getSlipQueueRecord(slipId);
+
+    slipQueueEditInlineMessage(
+      chatId,
+      messageId,
+      buildSlipQueueMessage(badRecord),
+      buildSlipQueueKeyboard(badRecord)
+    );
+
+    return;
+  }
+
+  // One final duplicate check at the moment the user clicks Save.
+  // This prevents saving the same Trx/Ref ID to both Sale and Expense.
+  const trxId = String(record.trxId || "").trim();
+
+  if(trxId && slipTransactionExistsAnywhere(trxId)){
+
+    updateSlipQueueRecord(slipId, {
+      status: "DUPLICATE",
+      error: "Duplicate transaction/reference ID already exists."
+    });
+
+    const duplicateRecord = getSlipQueueRecord(slipId);
+
+    slipQueueEditInlineMessage(
+      chatId,
+      messageId,
+      buildSlipQueueMessage(duplicateRecord),
+      buildSlipQueueKeyboard(duplicateRecord)
+    );
+
+    return;
+  }
+
+  if(saveType === "SALE"){
+
+    saveQueuedSaleSlip(chatId, slipId, messageId, record, data);
+    return;
+  }
+
+  if(saveType === "EXPENSE"){
+
+    saveQueuedExpenseSlip(chatId, slipId, messageId, record, data);
+    return;
+  }
+}
+
+
+function slipTransactionExistsAnywhere(trxId){
+
+  trxId = String(trxId || "").trim();
+
+  if(!trxId){
+    return false;
+  }
+
+  if(typeof transactionIdExists === "function" && transactionIdExists(trxId)){
+    return true;
+  }
+
+  if(typeof expenseSlipExists === "function" && expenseSlipExists(trxId)){
+    return true;
+  }
+
+  return false;
+}
+
+
+function saveQueuedSaleSlip(chatId, slipId, messageId, record, data){
+
+  const trxId = String(record.trxId || "").trim();
+
+  if(!trxId){
+
+    updateSlipQueueRecord(slipId, {
+      status: "FAILED",
+      type: "SALE_TRANSACTION",
+      error: "Trx ID missing. Save as Expense is still available."
+    });
+
+    const newRecord = getSlipQueueRecord(slipId);
+
+    slipQueueEditInlineMessage(
+      chatId,
+      messageId,
+      buildSlipQueueMessage(newRecord),
+      buildSlipQueueKeyboard(newRecord)
+    );
+
+    return;
+  }
+
+  // Re-check both destinations immediately before writing.
+  if(slipTransactionExistsAnywhere(trxId)){
+
+    updateSlipQueueRecord(slipId, {
+      status: "DUPLICATE",
+      type: "SALE_TRANSACTION",
+      error: "Duplicate transaction/reference ID already exists."
+    });
+
+    const newRecord = getSlipQueueRecord(slipId);
+
+    slipQueueEditInlineMessage(
+      chatId,
+      messageId,
+      buildSlipQueueMessage(newRecord),
+      buildSlipQueueKeyboard(newRecord)
+    );
+
+    return;
+  }
+
+  const dateObj = parseManualTransactionDate(data.transactionDate);
+  const timeObj = parseManualTransactionTime(data.transactionTime);
+
+  if(!dateObj || !timeObj){
+
+    updateSlipQueueRecord(slipId, {
+      status: "FAILED",
+      type: "SALE_TRANSACTION",
+      error: "Invalid date or time."
+    });
+
+    const newRecord = getSlipQueueRecord(slipId);
+
+    slipQueueEditInlineMessage(
+      chatId,
+      messageId,
+      buildSlipQueueMessage(newRecord),
+      buildSlipQueueKeyboard(newRecord)
+    );
+
+    return;
+  }
+
+  const sheet = SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getSheetByName(SHEET_NAME);
+
+  if(!sheet){
+
+    updateSlipQueueRecord(slipId, {
+      status: "FAILED",
+      type: "SALE_TRANSACTION",
+      error: "Transaction sheet not found."
+    });
+
+    const newRecord = getSlipQueueRecord(slipId);
+
+    slipQueueEditInlineMessage(
+      chatId,
+      messageId,
+      buildSlipQueueMessage(newRecord),
+      buildSlipQueueKeyboard(newRecord)
+    );
+
+    return;
+  }
+
+  // If Gemini classified the slip as Expense, result.name may be blank.
+  // Use expenseHolder/holder as the fallback customer/payer name.
+  const saleName =
+    String(
+      data.name ||
+      data.payer ||
+      data.customer ||
+      data.expenseHolder ||
+      record.holder ||
+      "-"
+    ).trim() || "-";
+
+  const saleMerchant =
+    String(record.merchant || data.merchant || "PHTEAS DECOR").trim() || "PHTEAS DECOR";
+
+  sheet.appendRow([
+    dateObj,
+    timeObj,
+    saleName,
+    Number(record.originalAmount) || 0,
+    record.currency || "USD",
+    saleMerchant,
+    "",
+    trxId,
+    "IMAGE SLIP TRANSACTION"
+  ]);
+
+  sortTransactions();
+
+  updateSlipQueueRecord(slipId, {
+    type: "SALE_TRANSACTION",
+    status: "SAVED",
+    error: ""
+  });
+
+  slipQueueEditInlineMessage(
+    chatId,
+    messageId,
+    "✅ Sale Slip Saved\n\n" +
+    "ID: " + slipId + "\n" +
+    "Date: " + (data.transactionDate || "-") + "\n" +
+    "Time: " + (data.transactionTime || "-") + "\n" +
+    "Name: " + saleName + "\n" +
+    "Amount: " + (record.currency || "USD") + " " + formatNumber(record.originalAmount, 2) + "\n" +
+    "Merchant: " + saleMerchant + "\n" +
+    "Trx ID: " + trxId,
+    []
+  );
+}
+
+
+function saveQueuedExpenseSlip(chatId, slipId, messageId, record, data){
+
+  const trxId = String(record.trxId || "").trim();
+
+  // Re-check both destinations immediately before writing.
+  if(trxId && slipTransactionExistsAnywhere(trxId)){
+
+    updateSlipQueueRecord(slipId, {
+      status: "DUPLICATE",
+      type: "EXPENSE",
+      error: "Duplicate transaction/reference ID already exists."
+    });
+
+    const newRecord = getSlipQueueRecord(slipId);
+
+    slipQueueEditInlineMessage(
+      chatId,
+      messageId,
+      buildSlipQueueMessage(newRecord),
+      buildSlipQueueKeyboard(newRecord)
+    );
+
+    return;
+  }
+
+  const expenseHolder =
+    String(
+      record.holder ||
+      data.expenseHolder ||
+      data.name ||
+      data.payer ||
+      data.customer ||
+      "-"
+    ).trim() || "-";
+
+  const expenseMerchant =
+    String(
+      record.merchant ||
+      data.merchant ||
+      "-"
+    ).trim() || "-";
+
+  const expenseRemark =
+    String(
+      record.remark ||
+      data.remark ||
+      "-"
+    ).trim() || "-";
+
+  const expenseAmount = Number(record.originalAmount) || 0;
+
+  if(!expenseAmount){
+
+    updateSlipQueueRecord(slipId, {
+      status: "FAILED",
+      type: "EXPENSE",
+      error: "Expense amount missing."
+    });
+
+    const newRecord = getSlipQueueRecord(slipId);
+
+    slipQueueEditInlineMessage(
+      chatId,
+      messageId,
+      buildSlipQueueMessage(newRecord),
+      buildSlipQueueKeyboard(newRecord)
+    );
+
+    return;
+  }
+
+  try{
+
+    saveExpenseSlipToPettyCash(chatId, {
+      dateText: data.transactionDate,
+      timeText: data.transactionTime,
+      holder: expenseHolder,
+      amount: expenseAmount,
+      currency: record.currency || "USD",
+      merchant: expenseMerchant,
+      remark: expenseRemark,
+      trxId: trxId
+    });
+
+    updateSlipQueueRecord(slipId, {
+      type: "EXPENSE",
+      status: "SAVED",
+      error: ""
+    });
+
+    slipQueueEditInlineMessage(
+      chatId,
+      messageId,
+      "✅ Expense Slip Saved\n\n" +
+      "ID: " + slipId + "\n" +
+      "Date: " + (data.transactionDate || "-") + "\n" +
+      "Time: " + (data.transactionTime || "-") + "\n" +
+      "Holder: " + expenseHolder + "\n" +
+      "Seller: " + expenseMerchant + "\n" +
+      "Original Amount: " + formatExpenseOriginalAmount(record.originalAmount, record.currency) + "\n" +
+      "Saved Amount: $" + formatNumber(record.usdAmount, 2) + "\n" +
+      "Reference/Trx ID: " + (trxId || "-"),
+      []
+    );
+
+  }catch(err){
+
+    updateSlipQueueRecord(slipId, {
+      status: "FAILED",
+      type: "EXPENSE",
+      error: err.message || String(err)
+    });
+
+    const newRecord = getSlipQueueRecord(slipId);
+
+    slipQueueEditInlineMessage(
+      chatId,
+      messageId,
+      buildSlipQueueMessage(newRecord),
+      buildSlipQueueKeyboard(newRecord)
+    );
+  }
+}
+
+
+// ======================================================
+// Telegram inline helpers
+// ======================================================
+
+function slipQueueSendInlineMessage(chatId, text, inlineKeyboard){
+
+  const url = "https://api.telegram.org/bot" + TOKEN + "/sendMessage";
+
+  const payload = {
+    chat_id: chatId,
+    text: text
+  };
+
+  if(inlineKeyboard && inlineKeyboard.length > 0){
+    payload.reply_markup = {
+      inline_keyboard: inlineKeyboard
+    };
+  }
+
+  const response = UrlFetchApp.fetch(url, {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  });
+
+  const result = JSON.parse(response.getContentText());
+
+  if(result.ok && result.result && result.result.message_id){
+    return result.result.message_id;
+  }
+
+  return "";
+}
+
+
+function slipQueueEditInlineMessage(chatId, messageId, text, inlineKeyboard){
+
+  const url = "https://api.telegram.org/bot" + TOKEN + "/editMessageText";
+
+  const payload = {
+    chat_id: chatId,
+    message_id: messageId,
+    text: text,
+    reply_markup: {
+      inline_keyboard: inlineKeyboard || []
+    }
+  };
+
+  UrlFetchApp.fetch(url, {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  });
+}
+
+
+function slipQueueAnswerCallback(callbackQueryId){
+
+  const url = "https://api.telegram.org/bot" + TOKEN + "/answerCallbackQuery";
+
+  const payload = {
+    callback_query_id: callbackQueryId
+  };
+
+  UrlFetchApp.fetch(url, {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  });
+}

@@ -1,0 +1,203 @@
+/* frontend/src/styles/global.css
+   Day/night theme via CSS variables (spec §58: "a genuine readable
+   theme, not just inverted colors" — night mode uses warmer, lower-
+   contrast surfaces rather than a pure black/white invert). */
+
+:root[data-theme="day"] {
+  --bg: #f5f7fa;
+  --surface: #ffffff;
+  --surface-alt: #eef1f6;
+  --text: #1a2233;
+  --text-muted: #5b6472;
+  --primary: #2563eb;
+  --primary-text: #ffffff;
+  --success: #16a34a;
+  --danger: #dc2626;
+  --warning: #d97706;
+  --border: #e2e6ee;
+}
+
+:root[data-theme="night"] {
+  --bg: #14171f;
+  --surface: #1c202b;
+  --surface-alt: #242938;
+  --text: #e7e9ee;
+  --text-muted: #9aa1b0;
+  --primary: #5b8def;
+  --primary-text: #0b0f19;
+  --success: #4ade80;
+  --danger: #f87171;
+  --warning: #fbbf24;
+  --border: #2c3140;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Inter", "Noto Sans Khmer", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+html[lang="kh"] body {
+  font-family: "Noto Sans Khmer", "Inter", system-ui, sans-serif;
+  line-height: 1.7; /* Khmer glyphs need extra line-height, spec §58 */
+}
+
+a { color: var(--primary); }
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.header .brand { font-weight: 700; font-size: 1.1rem; }
+.header .validity { font-size: 0.8rem; color: var(--text-muted); }
+.header .actions { display: flex; gap: 8px; align-items: center; }
+.header button {
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.nav-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.nav-tabs a {
+  padding: 8px 14px;
+  border-radius: 8px;
+  text-decoration: none;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+.nav-tabs a.active { background: var(--primary); color: var(--primary-text); }
+
+.page { padding: 16px; max-width: 1100px; margin: 0 auto; width: 100%; }
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.summary-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+}
+.summary-card .label { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 4px; }
+.summary-card .value { font-size: 1.4rem; font-weight: 700; }
+.summary-card.warning { border-color: var(--warning); }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+th { color: var(--text-muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; }
+
+.btn {
+  background: var(--primary);
+  color: var(--primary-text);
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.btn.secondary { background: var(--surface-alt); color: var(--text); border: 1px solid var(--border); }
+.btn.danger { background: var(--danger); color: white; }
+
+.filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.filters button {
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.filters button.active { background: var(--primary); color: var(--primary-text); border-color: var(--primary); }
+
+input, select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.9rem;
+}
+
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+  display: flex; align-items: center; justify-content: center; z-index: 50;
+}
+.modal {
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 20px;
+  max-width: 420px;
+  width: 90%;
+}
+.modal .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+
+.empty-state, .loading-state, .error-state {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 40px 0;
+}
+
+.success-state {
+  text-align: center;
+  color: var(--success);
+  padding: 12px 0;
+}
+
+.btn:disabled,
+.filters button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.filters label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}

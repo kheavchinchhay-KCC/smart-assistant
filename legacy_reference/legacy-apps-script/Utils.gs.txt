@@ -1,0 +1,198 @@
+function sendMessage(chatId, text){
+  const url = "https://api.telegram.org/bot" + TOKEN + "/sendMessage";
+
+  const payload = {
+    chat_id: chatId,
+    text: text
+  };
+
+  try {
+    UrlFetchApp.fetch(url, {
+      method: "post",
+      contentType: "application/json",
+      payload: JSON.stringify(payload)
+    });
+  } catch (e) {
+    Logger.log(e);
+  }
+}
+
+function setState(chatId, state){
+
+  const sheet = SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getSheetByName("BotState");
+
+  const data = sheet.getDataRange().getValues();
+
+  for(let i = 1; i < data.length; i++){
+
+    if(String(data[i][0]) === String(chatId)){
+      sheet.getRange(i + 1, 2).setValue(state);
+      return;
+    }
+
+  }
+
+  sheet.appendRow([chatId, state]);
+}
+
+function getState(chatId){
+
+  const sheet = SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getSheetByName("BotState");
+
+  const data = sheet.getDataRange().getValues();
+
+  for(let i = 1; i < data.length; i++){
+
+    if(String(data[i][0]) === String(chatId)){
+      return data[i][1];
+    }
+
+  }
+
+  return "";
+}
+
+function clearState(chatId){
+  setState(chatId, "");
+}
+
+function sortTransactions(){
+
+  const sheet = SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getSheetByName(SHEET_NAME);
+
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+
+  if(lastRow <= 2) return;
+
+  const range = sheet.getRange(2, 1, lastRow - 1, lastCol);
+  const values = range.getValues();
+
+  values.sort(function(a,b){
+
+    const dateA = new Date(a[0]);
+    const dateB = new Date(b[0]);
+
+    const timeA = new Date(a[1]);
+    const timeB = new Date(b[1]);
+
+    const dtA = new Date(
+      dateA.getFullYear(),
+      dateA.getMonth(),
+      dateA.getDate(),
+      timeA.getHours(),
+      timeA.getMinutes(),
+      timeA.getSeconds()
+    );
+
+    const dtB = new Date(
+      dateB.getFullYear(),
+      dateB.getMonth(),
+      dateB.getDate(),
+      timeB.getHours(),
+      timeB.getMinutes(),
+      timeB.getSeconds()
+    );
+
+    return dtA - dtB; // old first
+
+  });
+
+  range.setValues(values);
+}
+
+function sortExistingTransactions(){
+  sortTransactions();
+}
+
+
+function authorizeDrive() {
+  DriveApp.getRootFolder();
+}
+
+
+function formatSheetDate(value){
+
+  if(value instanceof Date){
+    return Utilities.formatDate(value, TIME_ZONE, "M/d/yyyy");
+  }
+
+  return String(value || "");
+}
+
+
+function formatSheetTime(value){
+
+  if(value instanceof Date){
+    return Utilities.formatDate(value, TIME_ZONE, "HH:mm:ss");
+  }
+
+  return String(value || "");
+}
+
+function getUserAccess(chatId){
+
+  const sheet = SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getSheetByName(USER_SHEET);
+
+  if(!sheet){
+    return null;
+  }
+
+  const data = sheet.getDataRange().getValues();
+
+  for(let i = 1; i < data.length; i++){
+
+    const rowChatId = String(data[i][0]).trim();
+    const name = String(data[i][1] || "").trim();
+    const role = String(data[i][2] || "").trim().toUpperCase();
+    const status = String(data[i][3] || "").trim().toUpperCase();
+
+    if(rowChatId === String(chatId)){
+
+      return {
+        chatId: rowChatId,
+        name: name,
+        role: role,
+        status: status
+      };
+    }
+  }
+
+  return null;
+}
+
+
+function isUserAllowed(chatId){
+
+  const user = getUserAccess(chatId);
+
+  if(!user){
+    return false;
+  }
+
+  if(user.status !== STATUS_ACTIVE){
+    return false;
+  }
+
+  return true;
+}
+
+
+function isAdmin(chatId){
+
+  const user = getUserAccess(chatId);
+
+  if(!user){
+    return false;
+  }
+
+  return user.status === STATUS_ACTIVE && user.role === ROLE_ADMIN;
+}

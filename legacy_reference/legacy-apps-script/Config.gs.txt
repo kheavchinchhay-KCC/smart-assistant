@@ -1,0 +1,280 @@
+//======================================
+// Telegram
+//======================================
+
+const TOKEN = "";
+const GEMINI_API_KEYS = [
+  "AQ.Ab8RN6",
+  "AQ.Ab8RN6",
+  "AQ.Ab8RN6"
+];
+const GEMINI_MODELS = [
+  "gemini-3.5-flash",
+  "gemini-3.5-flash-lite"
+];
+//======================================
+// Sheets
+//======================================
+
+const SHEET_NAME = "Transactions";
+const STATE_SHEET = "BotState";
+const CUSTOMER_SHEET = "Customers";
+
+//======================================
+// Time
+//======================================
+
+const TIME_ZONE = Session.getScriptTimeZone();
+
+//======================================
+// Columns
+//======================================
+
+const COL_DATE = 0;
+const COL_TIME = 1;
+const COL_NAME = 2;
+const COL_AMOUNT = 3;
+const COL_CURRENCY = 4;
+const COL_MERCHANT = 5;
+const COL_REMARK = 6;
+const COL_TRXID = 7;
+const COL_RAW = 8;
+
+//======================================
+// Menu Text
+//======================================
+const BTN_REPORTS      = "📊 របាយការណ៍";
+const BTN_SEARCH       = "🔍 ស្វែងរក";
+
+const BTN_CASH_IN      = "💰 ដាក់ប្រាក់";
+const BTN_EXPENSE      = "💸 ចំណាយ";
+const BTN_TODAY        = "💰 សរុបប្រតិបត្តិការថ្ងៃនេះ";
+const BTN_CASH_SUMMARY = "📋 Cash Summary";
+
+const BTN_BACK         = "↩️ ត្រឡប់";
+
+// Reports
+
+const BTN_YESTERDAY    = "📅 សរុបម្សិលមិញ";
+const BTN_WEEKLY       = "🔰 សប្តាហ៍នេះ";
+const BTN_MONTHLY      = "📈 សរុបខែនេះ";
+const BTN_DATE         = "📅 កាលបរិច្ឆេទ";
+const BTN_DATERANGE    = "📅 ចន្លោះកាលបរិច្ឆេទ";
+const BTN_MISSING_TRANSACTION = "➕ វាយបញ្ចូលប្រតិបត្តិការដែលខ្វះ";
+const BTN_DEFAULT_MERCHANT = "🏪 PHTEAS DECOR";
+const BTN_OTHER_MERCHANT = "✍️ Other Merchant";
+// Search
+const BTN_CUSTOMER     = "👤 អតិថិជន";
+const BTN_TRX          = "🔍 ស្វែងរកតាមលេខយោងTrx";
+const BTN_MERCHANT     = "🏪 សាខា";
+const BTN_TOP_CUSTOMERS      = "🏆 ចំណាត់ថ្នាក់ទិញ";
+const BTN_TOP_MERCHANTS      = "🏪 ចំណាត់ថ្នាក់សាខា";
+
+
+//======================================
+// Expense & rate 
+//======================================
+const KHR_PER_USD = 4000;
+const BTN_EDIT_EXPENSE_SLIP = "✏️ Edit Expense Slip";
+const BTN_CONFIRM_EXPENSE_SLIP = "✅ Save Expense Slip";
+const BTN_CANCEL_EXPENSE_SLIP  = "❌ Cancel Expense Slip";
+const SLIP_QUEUE_SHEET_NAME = "SlipQueue";
+
+
+//======================================
+// Report Titles
+//======================================
+
+const TITLE_TODAY      = "💰 របាយការណ៍សរុបថ្ងៃនេះ";
+const TITLE_YESTERDAY  = "📅 របាយការណ៍សរុបម្សិលមិញ";
+const TITLE_WEEKLY     = "🔰 របាយការណ៍សរុបសប្តាហ៍នេះ";
+const TITLE_MONTHLY    = "📈 របាយការណ៍សរុបខែនេះ";
+const TITLE_DATE       = "📅 របាយការណ៍តាមកាលបរិច្ឆេទ";
+const TITLE_DATERANGE  = "📅 របាយការណ៍ចន្លោះកាលបរិច្ឆេទ";
+const BTN_CONFIRM_SLIP_TRANSACTION = "✅ Save Missing Transaction";
+const BTN_CANCEL_SLIP_TRANSACTION  = "❌ Cancel";
+const BTN_SHOW_MISSING_TRANSACTION = "📋 Show Missing Transactions";
+const BTN_EDIT_SLIP_TRANSACTION = "✏️ Edit Slip Result";
+const BTN_DELETE_TRANSACTION = "🗑 Delete Transaction";
+const BTN_CONFIRM_DELETE_TRANSACTION = "✅ Confirm Delete Transaction";
+const BTN_CANCEL_DELETE_TRANSACTION = "❌ Cancel Delete Transaction";
+
+
+//======================================
+// Telegram Commands
+//======================================
+
+const CMD_START                = "/start";
+const CMD_MENU                 = "/menu";
+
+const CMD_TODAY                = "/today";
+const CMD_YESTERDAY            = "/yesterday";
+const CMD_WEEKLY               = "/weekly";
+const CMD_MONTHLY              = "/monthly";
+
+const CMD_DATE                 = "/date";
+const CMD_DATERANGE            = "/daterange";
+
+const CMD_CUSTOMER             = "/customer";
+const CMD_TRX                  = "/trx";
+const CMD_MERCHANT             = "/merchant";
+
+const CMD_TOP_CUSTOMERS        = "/top";
+const CMD_TOP_MERCHANTS        = "/topmerchants";
+
+const BTN_PETTY_DAILY       = "📅 Daily Petty Cash";
+const BTN_PETTY_WEEKLY      = "📈 Weekly Petty Cash";
+const BTN_PETTY_MONTHLY     = "📆 Monthly Petty Cash";
+const BTN_PETTY_DATE        = "🗓 Date Petty Cash";
+const BTN_PETTY_DATERANGE   = "📆 Date Range Petty Cash";
+const BTN_PETTY_MISSING     = "➕ Put Missing Petty Cash";
+const BTN_CASH_BALANCE = "💵 សរុបប្រាក់សុទ្ធ";
+const BTN_PETTY_HISTORY = "📜 Petty Cash History";
+const BTN_MISSING_CASH_IN = "💰 Missing Cash In";
+const BTN_MISSING_EXPENSE = "💸 Missing Expense";
+
+const BTN_PETTY_DELETE = "🗑 Delete Petty Cash";
+const BTN_PETTY_EDIT   = "✏️ Edit Petty Cash";
+
+
+
+
+//======================================
+// All Supported Commands
+//======================================
+
+const COMMANDS = [
+
+  CMD_START,
+  CMD_MENU,
+
+  BTN_REPORTS,
+  BTN_SEARCH,
+
+  BTN_CASH_IN,
+  BTN_EXPENSE,
+  BTN_CASH_SUMMARY,
+  BTN_MISSING_TRANSACTION,
+  BTN_CONFIRM_SLIP_TRANSACTION,
+  BTN_CANCEL_SLIP_TRANSACTION,
+  BTN_SHOW_MISSING_TRANSACTION,
+  BTN_EDIT_SLIP_TRANSACTION,
+  BTN_CONFIRM_EXPENSE_SLIP,
+  BTN_CANCEL_EXPENSE_SLIP,
+
+  BTN_DELETE_TRANSACTION,
+  BTN_CONFIRM_DELETE_TRANSACTION,
+  BTN_CANCEL_DELETE_TRANSACTION,
+
+  BTN_PETTY_DAILY,
+  BTN_PETTY_WEEKLY,
+  BTN_PETTY_MONTHLY,
+  BTN_PETTY_DATE,
+  BTN_PETTY_DATERANGE,
+  BTN_PETTY_MISSING,
+  BTN_CASH_BALANCE,
+  BTN_PETTY_HISTORY,
+  BTN_MISSING_CASH_IN,
+  BTN_MISSING_EXPENSE,
+
+  BTN_EDIT_EXPENSE_SLIP,
+
+  BTN_PETTY_DELETE,
+  BTN_PETTY_EDIT,
+
+  BTN_BACK,
+
+  CMD_TODAY,
+  BTN_TODAY,
+
+  CMD_YESTERDAY,
+  BTN_YESTERDAY,
+
+  CMD_WEEKLY,
+  BTN_WEEKLY,
+
+  CMD_MONTHLY,
+  BTN_MONTHLY,
+
+  CMD_DATE,
+  BTN_DATE,
+
+  CMD_DATERANGE,
+  BTN_DATERANGE,
+
+  CMD_CUSTOMER,
+  BTN_CUSTOMER,
+
+  CMD_TRX,
+  BTN_TRX,
+
+  CMD_MERCHANT,
+  BTN_MERCHANT,
+
+  CMD_TOP_CUSTOMERS,
+  BTN_TOP_CUSTOMERS,
+
+  CMD_TOP_MERCHANTS,
+  BTN_TOP_MERCHANTS
+
+];
+//======================================
+// Messages
+//======================================
+
+const MSG_CUSTOMER_NOT_FOUND = "❌ មិនមានអតិថិជន";
+const MSG_MERCHANT_NOT_FOUND = "❌ មិនមានឈ្មោះហាង";
+const MSG_TRX_NOT_FOUND = "❌ មិនមានលេខប្រតិបត្តិការនេះទេ";
+const MSG_NO_DATA = "❌មិនទាន់មានប្រតិបត្តិការនេះទេ​ សូមពិនិត្យម្តងទៀត";
+const MSG_INVISIBLE = "សូមរើសមុខងារដែលអ្នកត្រូវការ🔍";
+
+
+//======================================
+// Invalid Input
+//======================================
+
+const MSG_INVALID_INPUT =
+"❌ បញ្ចូលមិនត្រឹមត្រូវ \n\n" +
+"សូមចុចតាម មីនុយ Menu ដែលមានស្រាប់ ឬ ផ្ញើ ប្រតិបត្តិការ ធនាគាដែលត្រឹមត្រូវ (រូបភាព វិដេអូ ឯកសារ ឬ សរសេរមិនត្រឹមត្រូវ មិនអាចប្រើការបានទេ)\n\n" +
+"ឧទាហរណ៍:\n" +
+
+"• 💰 ថ្ងៃនេះ\n" +
+"• 👤 អតិថិជន\n" +
+"• 🔍 ស្វែងរកតាមTrx\n" +
+"• 🏪 ឈ្មោះសាខា\n" +
+"• ផ្ញើរ ប្រតិបត្តិការ ធនាគាដែលត្រឹមត្រូវ😊";
+
+//======================================
+// Petty Cash
+//======================================
+
+const PETTY_SHEET_NAME = "PettyCash";
+
+const PETTY_COL_ID = 0;
+const PETTY_COL_DATE = 1;
+const PETTY_COL_TIME = 2;
+const PETTY_COL_TYPE = 3;
+const PETTY_COL_AMOUNT = 4;
+const PETTY_COL_REMARK = 5;
+const PETTY_COL_RUNNING_BALANCE = 6;
+const PETTY_COL_CURRENT_CASH = 7;
+const PETTY_COL_USER = 8;
+const PETTY_COL_MODE = 9;
+const PETTY_COL_SOURCE = 10;
+const PETTY_COL_RAW = 11;
+
+const PETTY_LOW_ALERT = 100;
+
+
+
+//======================================
+// Admins (future)
+//======================================
+const ADMIN_ID = 2138045605;
+const USER_SHEET = "Users";
+
+const ROLE_ADMIN = "ADMIN";
+const ROLE_STAFF = "STAFF";
+
+const STATUS_ACTIVE = "ACTIVE";
+const STATUS_BLOCKED = "BLOCKED";
