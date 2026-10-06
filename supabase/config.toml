@@ -27,3 +27,18 @@ enabled = false
 
 [edge_runtime]
 enabled = true
+
+# The Telegram webhook is authenticated in application code using
+# TELEGRAM_WEBHOOK_SECRET, not a Supabase user JWT.
+[functions.telegram-webhook]
+verify_jwt = false
+
+# The frontend API uses the app's own signed session JWT (APP_SESSION_SECRET),
+# not a Supabase Auth JWT, so the Supabase gateway must not enforce its JWT check.
+[functions.api]
+verify_jwt = false
+
+# The Mini App auth endpoint receives Telegram WebApp initData and performs
+# its own Telegram signature validation before issuing the app session token.
+[functions.auth-telegram-miniapp]
+verify_jwt = false
