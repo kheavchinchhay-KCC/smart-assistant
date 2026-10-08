@@ -7,20 +7,21 @@ import Sales from "./pages/Sales";
 import PettyCash from "./pages/PettyCash";
 import Preferences from "./pages/Settings/Preferences";
 import Users from "./pages/Settings/Users";
+import WebLogin from "./pages/WebLogin";
 
 export default function App() {
-  const { status, t } = useApp();
+  const { status, t, authError } = useApp();
 
   if (status === "checking") {
     return <div className="loading-state">{t("auth.checking")}</div>;
   }
 
-  if (status === "not_in_telegram") {
-    return <div className="empty-state">{t("auth.openInTelegram")}</div>;
+  if (status === "login_required") {
+    return <WebLogin />;
   }
 
   if (status === "denied") {
-    return <div className="error-state">{t("auth.denied")}</div>;
+    return <div className="error-state">{authError || t("auth.denied")}</div>;
   }
 
   return (
