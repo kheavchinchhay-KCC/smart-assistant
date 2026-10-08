@@ -82,5 +82,8 @@
   "common.currentCash": "សាច់ប្រាក់បច្ចុប្បន្ន",
   "common.source": "ប្រភព",
   "common.mode": "របៀប",
-  "common.exportTooLarge": "ការនាំចេញមានកំណត់ត្រឹម 50,000 ជួរដេក។ សូមបង្រួមចន្លោះកាលបរិច្ឆេទ ហើយព្យាយាមម្តងទៀត។"
+  "common.exportTooLarge": "ការនាំចេញមានកំណត់ត្រឹម 50,000 ជួរដេក។ សូមបង្រួមចន្លោះកាលបរិច្ឆេទ ហើយព្យាយាមម្តងទៀត។",
+  "auth.webLoginTitle": "ចូលប្រើ Smart Assistant តាម Web",
+  "auth.webLoginDescription": "ប្រើគណនី Telegram របស់អ្នក ដើម្បីចូលប្រើ Smart Assistant ដោយសុវត្ថិភាព។",
+  "auth.loginWithTelegram": "ចូលដោយប្រើ Telegram"
 }

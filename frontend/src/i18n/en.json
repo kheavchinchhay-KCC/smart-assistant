@@ -82,5 +82,8 @@
   "common.currentCash": "Current Cash",
   "common.source": "Source",
   "common.mode": "Mode",
-  "common.exportTooLarge": "Export is limited to the first 50,000 rows. Please narrow the date range and try again."
+  "common.exportTooLarge": "Export is limited to the first 50,000 rows. Please narrow the date range and try again.",
+  "auth.webLoginTitle": "Smart Assistant Web Login",
+  "auth.webLoginDescription": "Use your Telegram account to securely sign in to Smart Assistant.",
+  "auth.loginWithTelegram": "Log in with Telegram"
 }
