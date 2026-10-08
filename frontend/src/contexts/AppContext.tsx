@@ -5,10 +5,11 @@
 
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { authenticateWithTelegram, getStoredSession, callApi, type SessionUser } from "../lib/api";
+import { completeTelegramWebLogin } from "../lib/webAuth";
 import { translate, type Lang } from "../i18n";
 
 type Theme = "day" | "night";
-type AuthStatus = "checking" | "authenticated" | "denied" | "not_in_telegram";
+type AuthStatus = "checking" | "authenticated" | "denied" | "login_required";
 
 interface AppContextValue {
   status: AuthStatus;
@@ -18,6 +19,7 @@ interface AppContextValue {
   theme: Theme;
   toggleTheme: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
+  authError: string | null;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -30,6 +32,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [lang, setLangState] = useState<Lang>((localStorage.getItem("lang") as Lang) || "en");
   const [theme, setTheme] = useState<Theme>((localStorage.getItem("theme") as Theme) || "day");
+  const [authError, setAuthError] = useState<string | null>(null);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -43,6 +46,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     async function bootstrap() {
+      setAuthError(null);
+
+      if (window.location.pathname === "/auth/callback") {
+        try {
+          const session = await completeTelegramWebLogin(window.location.search);
+          setUser(session.user);
+          setLangState(session.user.language);
+          window.history.replaceState({}, document.title, "/");
+          setStatus("authenticated");
+        } catch (e) {
+          setAuthError(e instanceof Error ? e.message : "Telegram web login failed");
+          setStatus("denied");
+        }
+        return;
+      }
+
       const existing = getStoredSession();
       if (existing) {
         setUser(existing.user);
@@ -52,22 +71,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
 
       const tg = window.Telegram?.WebApp;
-      if (!tg || !tg.initData) {
-        setStatus("not_in_telegram");
+      if (tg?.initData) {
+        tg.ready?.();
+        tg.expand?.();
+        try {
+          const session = await authenticateWithTelegram(tg.initData);
+          setUser(session.user);
+          setLangState(session.user.language);
+          setStatus("authenticated");
+        } catch {
+          setStatus("denied");
+        }
         return;
       }
 
-      tg.ready?.();
-      tg.expand?.();
-
-      try {
-        const session = await authenticateWithTelegram(tg.initData);
-        setUser(session.user);
-        setLangState(session.user.language);
-        setStatus("authenticated");
-      } catch {
-        setStatus("denied");
-      }
+      setStatus("login_required");
     }
     bootstrap();
   }, []);
@@ -84,8 +102,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const toggleTheme = () => setTheme((t) => (t === "day" ? "night" : "day"));
 
   const value = useMemo<AppContextValue>(
-    () => ({ status, user, lang, setLang, theme, toggleTheme, t: (k, v) => translate(lang, k, v) }),
-    [status, user, lang, theme],
+    () => ({ status, user, lang, setLang, theme, toggleTheme, authError, t: (k, v) => translate(lang, k, v) }),
+    [status, user, lang, theme, authError],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
