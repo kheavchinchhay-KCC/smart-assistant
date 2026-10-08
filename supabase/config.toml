@@ -7,7 +7,6 @@ schemas = ["public", "storage", "vault"]
 
 [db]
 port = 54322
-major_version = 16
 
 [studio]
 enabled = true
@@ -41,4 +40,9 @@ verify_jwt = false
 # The Mini App auth endpoint receives Telegram WebApp initData and performs
 # its own Telegram signature validation before issuing the app session token.
 [functions.auth-telegram-miniapp]
+verify_jwt = false
+
+# Browser Telegram OIDC login endpoint. It validates Telegram ID tokens and
+# uses the same application session as the Mini App.
+[functions.auth-telegram-web]
 verify_jwt = false
