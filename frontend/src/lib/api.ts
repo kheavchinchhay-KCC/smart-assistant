@@ -35,7 +35,7 @@ export function getStoredSession(): StoredSession | null {
   }
 }
 
-function storeSession(session: StoredSession) {
+export function storeSession(session: StoredSession) {
   sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
 }
 
@@ -70,6 +70,30 @@ export async function authenticateWithTelegram(initData: string): Promise<Stored
   const data = await res.json();
   const session: StoredSession = { token: data.token, user: data.user };
   storeSession(session);
+  return session;
+}
+
+
+export async function authenticateWithTelegramWeb(
+  code: string,
+  codeVerifier: string,
+  nonce: string,
+): Promise<StoredSession> {
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/auth-telegram-web`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${PUBLIC_KEY}`,
+    },
+    body: JSON.stringify({ code, codeVerifier, nonce }),
+  });
+
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body?.error?.message ?? "Telegram web login failed");
+  }
+
+  const session: StoredSession = { token: body.token, user: body.user };
   return session;
 }
 
