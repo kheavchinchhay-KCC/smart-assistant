@@ -208,12 +208,14 @@ Deno.serve(async (req: Request) => {
         }));
       }
 
-      case "sales.summary":
-        return jsonResponse(await callRpc("sale_summary", {
+      case "sales.summary": {
+        const rows = await callRpc<Array<{ transaction_count: number; usd_total: number; khr_total: number }>>("sale_summary", {
           p_user_id: userId,
           p_start: p.start ? asIsoDateTime(p.start, "start") : new Date(0).toISOString(),
           p_end: p.end ? asIsoDateTime(p.end, "end") : new Date().toISOString(),
-        }));
+        });
+        return jsonResponse(rows[0] ?? { transaction_count: 0, usd_total: 0, khr_total: 0 });
+      }
 
       case "sales.export": {
         const keyword = asString(p.keyword, 200) ?? "";
@@ -287,12 +289,14 @@ Deno.serve(async (req: Request) => {
         }));
       }
 
-      case "petty.summary":
-        return jsonResponse(await callRpc("petty_cash_summary", {
+      case "petty.summary": {
+        const rows = await callRpc<Array<{ cash_in: number; expense: number; period_balance: number; current_cash: number }>>("petty_cash_summary", {
           p_user_id: userId,
           p_start: p.start ? asIsoDateTime(p.start, "start") : new Date(0).toISOString(),
           p_end: p.end ? asIsoDateTime(p.end, "end") : new Date().toISOString(),
-        }));
+        });
+        return jsonResponse(rows[0] ?? { cash_in: 0, expense: 0, period_balance: 0, current_cash: 0 });
+      }
 
       case "petty.balance":
         return jsonResponse({ current_cash: await callRpc("current_petty_cash_balance", { p_user_id: userId }) });
