@@ -30,10 +30,14 @@ interface TelegramClaims {
   iss?: string;
   aud?: string | string[];
   sub?: string;
+  // Telegram's `sub` is the OIDC subject identifier; `id` from the `profile`
+  // scope is the Telegram Bot API user ID used by app_users.telegram_id.
+  id?: number | string;
   exp?: number;
   iat?: number;
   nonce?: string;
 }
+
 
 function base64UrlToBytes(value: string): Uint8Array {
   const normalized = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
@@ -138,13 +142,33 @@ Deno.serve(async (req: Request) => {
 
     const tokenBody = await tokenResponse.json().catch(() => ({}));
     if (!tokenResponse.ok || typeof tokenBody.id_token !== "string") {
-      console.error("Telegram OIDC token exchange failed", tokenResponse.status, tokenBody?.error ?? "unknown_error");
+      console.error("Telegram OIDC token exchange failed", {
+        httpStatus: tokenResponse.status,
+        error: typeof tokenBody?.error === "string" ? tokenBody.error : "unknown_error",
+        errorDescription: typeof tokenBody?.error_description === "string" ? tokenBody.error_description : null,
+        errorUri: typeof tokenBody?.error_uri === "string" ? tokenBody.error_uri : null,
+      });
       return errorResponse("Telegram login could not be completed", 401);
     }
 
     const claims = await verifyTelegramIdToken(tokenBody.id_token, clientId, body.nonce);
-    const telegramId = claims.sub?.trim() ?? "";
+
+    // Telegram OIDC distinguishes `sub` (the OIDC subject identifier) from
+    // `id` (the Telegram user ID included by the `profile` scope). The database
+    // stores Bot API Telegram IDs, so looking up by `sub` incorrectly rejects
+    // existing users even when OIDC login succeeds.
+    const rawTelegramId = claims.id;
+    const telegramId = typeof rawTelegramId === "number"
+      ? (Number.isSafeInteger(rawTelegramId) && rawTelegramId > 0 ? String(rawTelegramId) : "")
+      : typeof rawTelegramId === "string"
+        ? rawTelegramId.trim()
+        : "";
+
     if (!/^\d+$/.test(telegramId) || BigInt(telegramId) <= 0n) {
+      console.error("Telegram OIDC profile user ID missing or invalid", {
+        hasOidcSubject: Boolean(claims.sub),
+        hasProfileId: rawTelegramId !== undefined && rawTelegramId !== null,
+      });
       return errorResponse("Telegram identity is invalid", 401);
     }
 
