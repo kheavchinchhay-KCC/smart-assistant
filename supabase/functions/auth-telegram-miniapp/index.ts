@@ -56,8 +56,10 @@ Deno.serve(async (req: Request) => {
 
   const result = await validateInitData(body.initData, botToken);
   if (!result.ok || !result.user) {
-    // Never leak *why* validation failed beyond a generic reason —
-    // avoids giving an attacker a signal about which check to work around.
+    // Log only the validation category, never initData or any secret.
+    // This lets us diagnose Telegram Mini App validation failures in
+    // Supabase logs without exposing credentials or signed payloads.
+    console.warn("Telegram initData validation failed:", result.reason ?? "unknown");
     return errorResponse("Telegram authentication failed", 401);
   }
 
