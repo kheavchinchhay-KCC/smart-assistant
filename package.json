@@ -1,0 +1,13 @@
+{
+  "name": "smart-assistant-ai-studio-root",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Root runner for AI Studio previews. The production Vite app remains in frontend/ and Netlify continues to build from frontend/.",
+  "scripts": {
+    "dev": "npm --prefix frontend ci && npm --prefix frontend run dev -- --host 0.0.0.0",
+    "start": "npm --prefix frontend ci && npm --prefix frontend run dev -- --host 0.0.0.0",
+    "build": "npm --prefix frontend ci && npm --prefix frontend run build",
+    "preview": "npm --prefix frontend run preview -- --host 0.0.0.0",
+    "lint": "npm --prefix frontend run lint"
+  }
+}
