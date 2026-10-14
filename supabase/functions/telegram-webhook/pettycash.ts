@@ -251,12 +251,13 @@ export async function sendPettyReportMenu(ctx: BotContext): Promise<void> {
 
 export async function sendPettyReportForPreset(ctx: BotContext, preset: DatePresetKey): Promise<void> {
   const { start, end } = resolveDatePreset(preset, ctx.appUser.timezone);
-  const summary = await callRpc<{ cash_in: number; expense: number; period_balance: number; current_cash: number }>(
+  const rows = await callRpc<Array<{ cash_in: number; expense: number; period_balance: number; current_cash: number }>>(
     "petty_cash_summary", { p_user_id: ctx.appUser.id, p_start: start.toISOString(), p_end: end.toISOString() },
   );
+  const summary = rows[0] ?? { cash_in: 0, expense: 0, period_balance: 0, current_cash: 0 };
 
   await sendMessage(ctx.chatId, t(ctx.appUser.language, "petty_summary", {
-    period: labelForPreset(preset, ctx.appUser.language), cashIn: summary.cash_in.toFixed(2), expense: summary.expense.toFixed(2),
-    balance: summary.period_balance.toFixed(2), currentCash: summary.current_cash.toFixed(2),
+    period: labelForPreset(preset, ctx.appUser.language), cashIn: Number(summary.cash_in).toFixed(2), expense: Number(summary.expense).toFixed(2),
+    balance: Number(summary.period_balance).toFixed(2), currentCash: Number(summary.current_cash).toFixed(2),
   }));
 }

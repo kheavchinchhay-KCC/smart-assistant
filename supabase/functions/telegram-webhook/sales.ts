@@ -234,12 +234,13 @@ export async function sendSaleReportMenu(ctx: BotContext): Promise<void> {
 
 export async function sendSaleReportForPreset(ctx: BotContext, preset: DatePresetKey): Promise<void> {
   const { start, end } = resolveDatePreset(preset, ctx.appUser.timezone);
-  const summary = await callRpc<{ transaction_count: number; usd_total: number; khr_total: number }>("sale_summary", {
+  const rows = await callRpc<Array<{ transaction_count: number; usd_total: number; khr_total: number }>>("sale_summary", {
     p_user_id: ctx.appUser.id, p_start: start.toISOString(), p_end: end.toISOString(),
   });
+  const summary = rows[0] ?? { transaction_count: 0, usd_total: 0, khr_total: 0 };
 
   await sendMessage(ctx.chatId, t(ctx.appUser.language, "sale_summary", {
     period: labelForPreset(preset, ctx.appUser.language), count: summary.transaction_count,
-    usd: summary.usd_total.toFixed(2), khr: summary.khr_total.toFixed(0),
+    usd: Number(summary.usd_total).toFixed(2), khr: Number(summary.khr_total).toFixed(0),
   }));
 }
